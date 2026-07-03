@@ -20,6 +20,6 @@ if not exist "%PYTHON%" (
 )
 
 :: Run Jarvis with the venv Python
-"%PYTHON%" jarvis.py
+"%PYTHON%" jarvis_v2.py
 
 pause

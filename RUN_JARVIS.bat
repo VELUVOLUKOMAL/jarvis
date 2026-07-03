@@ -43,6 +43,6 @@ echo    Close this window or say "Jarvis off" to stop.
 echo  ====================================================
 echo.
 
-"%PYTHON%" jarvis.py
+"%PYTHON%" jarvis_v2.py
 
 pause
