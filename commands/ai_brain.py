@@ -89,11 +89,13 @@ def clear_history() -> str:
 def _build_context_prompt(query: str) -> str:
     """Build a prompt that includes recent history for context."""
     history = _load_history()
-    if not history:
+    # Exclude last user turn (current query) to prevent duplicate User prompt rendering
+    history_turns = history[:-1] if (history and history[-1]["role"] == "user") else history
+    if not history_turns:
         return f"{_SYSTEM_PROMPT}\n\nUser: {query}"
 
     context_lines = []
-    for turn in history[-10:]:  # Include last 10 turns max
+    for turn in history_turns[-10:]:
         role_label = "User" if turn["role"] == "user" else "Jarvis"
         context_lines.append(f"{role_label}: {turn['content']}")
 
@@ -108,8 +110,13 @@ def _ask_gemini(query: str) -> str | None:
         return None
     # Build contents with history for Gemini
     history = _load_history()
+    # Exclude last user turn (current query) to prevent consecutive 'user' messages
+    history_turns = history[:-1] if (history and history[-1]["role"] == "user") else history
+    
     contents = []
-    for turn in history[-8:]:
+    for turn in history_turns[-8:]:
+        if not turn.get("content"):
+            continue
         contents.append({
             "role": "user" if turn["role"] == "user" else "model",
             "parts": [{"text": turn["content"]}]
@@ -158,8 +165,13 @@ def _ask_xai(query: str) -> str | None:
         }
         
         history = _load_history()
+        # Exclude last user turn (current query) to prevent consecutive 'user' messages
+        history_turns = history[:-1] if (history and history[-1]["role"] == "user") else history
+        
         messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
-        for turn in history[-8:]:
+        for turn in history_turns[-8:]:
+            if not turn.get("content"):
+                continue
             messages.append({
                 "role": "user" if turn["role"] == "user" else "assistant",
                 "content": turn["content"]
@@ -263,6 +275,17 @@ def ask(query: str) -> str:
 
     if not answer:
         log.warning("Both AI providers unavailable.")
+        # If the query is about live information, let's proactively open a google search!
+        t_lower = query.lower()
+        live_keywords = ["weather", "score", "vs", "exam", "match", "news", "today", "tomorrow", "result", "time", "date", "status", "who is", "what is"]
+        if any(kw in t_lower for kw in live_keywords):
+            try:
+                import webbrowser
+                import urllib.parse
+                webbrowser.open(f"https://www.google.com/search?q={urllib.parse.quote(query)}")
+                return f"I couldn't reach the AI right now, so I opened a Google search for '{query}' on your browser, sir."
+            except Exception:
+                pass
         return (
             "I couldn't reach any AI right now. "
             "Please check your internet or make sure Ollama is running."
@@ -352,4 +375,110 @@ def warmup_ollama() -> None:
 
 # Initialize warmup on import
 warmup_ollama()
+
+
+def _ask_ollama_raw(prompt: str) -> str | None:
+    model_to_use = OLLAMA_MODEL
+    try:
+        r_tags = requests.get(f"{OLLAMA_URL}/api/tags", timeout=1.5)
+        if r_tags.status_code != 200:
+            return None
+        available = [m["name"] for m in r_tags.json().get("models", [])]
+        if model_to_use not in available and available:
+            matched = next((m for m in available if model_to_use.split(":")[0] in m), available[0])
+            model_to_use = matched
+    except Exception:
+        return None
+
+    try:
+        r = requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={
+                "model": model_to_use,
+                "prompt": prompt,
+                "system": _SYSTEM_PROMPT,
+                "stream": False,
+                "options": {"num_predict": 2000, "temperature": 0.2},
+            },
+            timeout=40,
+        )
+        r.raise_for_status()
+        return r.json().get("response", "").strip()
+    except Exception as e:
+        log.warning("Ollama raw generation failed: %s", e)
+        return None
+
+
+def _ask_xai_raw(prompt: str) -> str | None:
+    if not XAI_API_KEY:
+        return None
+    try:
+        url = "https://api.x.ai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {XAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "grok-beta",
+            "messages": [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2
+        }
+        r = requests.post(url, json=payload, headers=headers, timeout=25)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        log.warning("xAI raw API failed: %s", e)
+        return None
+
+
+def _ask_gemini_raw(prompt: str) -> str | None:
+    if not GEMINI_API_KEY:
+        return None
+    
+    models_to_try = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
+    extended_models = []
+    for m in models_to_try:
+        if m not in extended_models:
+            extended_models.append(m)
+        latest = f"{m}-latest" if not m.endswith("-latest") else m
+        if latest not in extended_models:
+            extended_models.append(latest)
+
+    for model in extended_models:
+        for api_ver in ["v1", "v1beta"]:
+            try:
+                url = (
+                    f"https://generativelanguage.googleapis.com/{api_ver}/models/"
+                    f"{model}:generateContent?key={GEMINI_API_KEY}"
+                )
+                payload = {
+                    "contents": [
+                        {"role": "user", "parts": [{"text": f"{_SYSTEM_PROMPT}\n\nUser: {prompt}"}]}
+                    ]
+                }
+                r = requests.post(url, json=payload, timeout=25)
+                if r.status_code == 404:
+                    continue
+                r.raise_for_status()
+                data = r.json()
+                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            except Exception as e:
+                log.warning("Gemini raw failed for model '%s' on %s: %s", model, api_ver, e)
+                continue
+    return None
+
+
+def generate_text_raw(prompt: str) -> str | None:
+    """Core raw generation (no conversation history) using Ollama -> xAI -> Gemini."""
+    res = _ask_ollama_raw(prompt)
+    if res:
+        return res
+    res = _ask_xai_raw(prompt)
+    if res:
+        return res
+    return _ask_gemini_raw(prompt)
+
 

@@ -15,3 +15,5 @@ comtypes
 pyautogui
 pygetwindow
 keyboard
+beautifulsoup4
+

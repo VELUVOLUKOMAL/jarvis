@@ -66,45 +66,17 @@ def _build_prompt(project_name: str, file_name: str, project_type: str, full_des
 
 
 def _generate_code(prompt: str) -> str:
-    """Generate code via Ollama → Gemini fallback."""
-    import os, requests, re
-
-    ollama_url = (os.environ.get("OLLAMA_URL") or "http://localhost:11434").rstrip("/")
-    ollama_model = (os.environ.get("OLLAMA_MODEL") or "llama3.2").strip()
-    gemini_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
-
-    # Try Ollama first (local, private)
+    """Generate code via unified fallback chain (Ollama -> xAI -> Gemini)."""
+    import re
     try:
-        r = requests.post(
-            f"{ollama_url}/api/generate",
-            json={"model": ollama_model, "prompt": prompt, "stream": False,
-                  "options": {"num_predict": 2000, "temperature": 0.3}},
-            timeout=60,
-        )
-        r.raise_for_status()
-        code = r.json().get("response", "").strip()
+        from commands.ai_brain import generate_text_raw
+        code = generate_text_raw(prompt)
         if code:
-            # Strip accidental markdown fences
             code = re.sub(r"^```\w*\n?", "", code)
             code = re.sub(r"\n?```$", "", code)
             return code
     except Exception as e:
-        log.warning("Ollama codegen failed: %s", e)
-
-    # Try Gemini
-    if gemini_key:
-        try:
-            model = (os.environ.get("GEMINI_MODEL") or "gemini-1.5-flash").strip()
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
-            payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
-            r = requests.post(url, json=payload, timeout=30)
-            r.raise_for_status()
-            code = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-            code = re.sub(r"^```\w*\n?", "", code)
-            code = re.sub(r"\n?```$", "", code)
-            return code
-        except Exception as e:
-            log.warning("Gemini codegen failed: %s", e)
+        log.warning("Unified codegen failed: %s", e)
 
     return "# Code generation failed. Please check your AI connection.\nprint('Hello, World!')"
 
