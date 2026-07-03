@@ -155,3 +155,281 @@ def list_folder_contents(folder: str) -> tuple[bool, str]:
         return True, f"In {folder}: " + ", ".join(names) + (". And more." if len(items) > 8 else ".")
     except Exception as e:
         return False, f"Could not read {folder}: {e}"
+
+
+def create_folder(folder_name: str) -> tuple[bool, str]:
+    """Create a folder on the Desktop (or user profile)."""
+    desktop = Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop"
+    folder_path = desktop / folder_name
+    try:
+        folder_path.mkdir(parents=True, exist_ok=True)
+        return True, f"Folder '{folder_name}' has been created on your Desktop."
+    except Exception as e:
+        return False, f"Could not create folder: {e}"
+
+
+def delete_file_with_confirmation(filename: str, update_hud_fn=None) -> tuple[bool, str]:
+    """Delete a file from Desktop/Downloads with GUI confirmation dialog."""
+    q = filename.lower().strip()
+    desktop = Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop"
+    downloads = Path(os.environ.get("USERPROFILE", Path.home())) / "Downloads"
+    
+    candidates = [desktop / filename, downloads / filename]
+    
+    target_path = None
+    for cand in candidates:
+        if cand.exists() and cand.is_file():
+            target_path = cand
+            break
+            
+    if target_path is None:
+        matches = _quick_search(filename)
+        if matches:
+            target_path = Path(matches[0])
+            
+    if target_path is None or not target_path.exists():
+        return False, f"I couldn't find any file named '{filename}' to delete."
+        
+    confirmed = True
+    if update_hud_fn:
+        import queue
+        res_queue = queue.Queue()
+        update_hud_fn("ASK_CONFIRMATION", (f"Are you sure you want to delete {target_path.name}?", res_queue))
+        try:
+            confirmed = res_queue.get(timeout=10.0)
+        except queue.Empty:
+            confirmed = False
+    else:
+        import tkinter.messagebox as mbox
+        confirmed = mbox.askyesno("Confirm Delete", f"Delete file {target_path.name}?")
+        
+    if confirmed:
+        try:
+            target_path.unlink()
+            return True, f"File {target_path.name} has been deleted."
+        except Exception as e:
+            return False, f"Failed to delete file: {e}"
+    else:
+        return True, "Deletion cancelled."
+
+
+def rename_file(old_name: str, new_name: str) -> tuple[bool, str]:
+    """Rename a file in Desktop or Downloads."""
+    desktop = Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop"
+    downloads = Path(os.environ.get("USERPROFILE", Path.home())) / "Downloads"
+    
+    target_path = None
+    for folder in [desktop, downloads]:
+        path = folder / old_name
+        if path.exists():
+            target_path = path
+            break
+            
+    if target_path is None:
+        matches = _quick_search(old_name)
+        if matches:
+            target_path = Path(matches[0])
+            
+    if target_path is None or not target_path.exists():
+        return False, f"Could not find the file '{old_name}' to rename."
+        
+    try:
+        new_path = target_path.parent / new_name
+        target_path.rename(new_path)
+        return True, f"Renamed {target_path.name} to {new_name}."
+    except Exception as e:
+        return False, f"Failed to rename file: {e}"
+
+
+def move_file(file_name: str, target_folder: str) -> tuple[bool, str]:
+    """Move a file to a folder."""
+    desktop = Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop"
+    downloads = Path(os.environ.get("USERPROFILE", Path.home())) / "Downloads"
+    
+    src_path = None
+    for folder in [desktop, downloads]:
+        path = folder / file_name
+        if path.exists():
+            src_path = path
+            break
+    if src_path is None:
+        matches = _quick_search(file_name)
+        if matches:
+            src_path = Path(matches[0])
+            
+    if src_path is None or not src_path.exists():
+        return False, f"Could not find file '{file_name}' to move."
+        
+    dest_path = None
+    folder_key = target_folder.lower().strip()
+    if folder_key in FOLDER_SHORTCUTS:
+        dest_path = FOLDER_SHORTCUTS[folder_key]
+    else:
+        path = desktop / target_folder
+        if path.exists() and path.is_dir():
+            dest_path = path
+        else:
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+                dest_path = path
+            except Exception:
+                pass
+                
+    if dest_path is None:
+        return False, f"Could not resolve destination folder '{target_folder}'."
+        
+    try:
+        import shutil
+        shutil.move(str(src_path), str(dest_path / src_path.name))
+        return True, f"Moved {src_path.name} to {target_folder}."
+    except Exception as e:
+        return False, f"Failed to move file: {e}"
+
+
+# ─── Persistent last-created file path ────────────────────────────────────────
+
+_last_created_file: Path | None = None
+
+
+def _resolve_location(location: str) -> Path:
+    """Resolve a user-provided location string to an absolute Path."""
+    if not location:
+        # Default to Desktop
+        return Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop"
+
+    loc = location.strip()
+
+    # Check if it's already an absolute Windows path (e.g. C:\Users\...)
+    try:
+        p = Path(loc)
+        if p.is_absolute():
+            p.mkdir(parents=True, exist_ok=True)
+            return p
+    except Exception:
+        pass
+
+    # Map friendly names
+    shortcuts_extended = dict(FOLDER_SHORTCUTS)
+    shortcuts_extended.update({
+        "here": Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop",
+        "projects": Path(os.environ.get("USERPROFILE", Path.home())) / "Projects",
+        "temp": Path(os.environ.get("TEMP", "C:\\Temp")),
+        "c drive": Path("C:\\"),
+        "d drive": Path("D:\\"),
+        "e drive": Path("E:\\"),
+    })
+
+    key = loc.lower()
+    for short, path in shortcuts_extended.items():
+        if key == short or key in short or short in key:
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+
+    # Try to resolve as a sub-path under USERPROFILE
+    fallback = Path(os.environ.get("USERPROFILE", Path.home())) / loc
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def create_file(filename: str, location: str = "", content: str = "") -> tuple[bool, str]:
+    """
+    Create a file at the given location.
+    Saves the path in memory for subsequent 'write code' commands.
+    """
+    global _last_created_file
+
+    # Clean up filename — strip surrounding quotes if any
+    filename = filename.strip().strip("'\"")
+    if not filename:
+        return False, "No filename provided."
+
+    target_dir = _resolve_location(location)
+    file_path = target_dir / filename
+
+    try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+        _last_created_file = file_path
+        # Also save to long-term memory for this session
+        try:
+            from commands.memory import remember
+            remember("last created file", str(file_path))
+        except Exception:
+            pass
+        log.info("Created file: %s", file_path)
+        return True, f"Created file {filename} at {target_dir}."
+    except Exception as e:
+        log.error("Failed to create file %s: %s", filename, e)
+        return False, f"Could not create file {filename}: {e}"
+
+
+def write_code_to_last_file(description: str) -> tuple[bool, str]:
+    """
+    Generate code using the AI brain and write it to the last created file.
+    Then open the file in VS Code.
+    """
+    global _last_created_file
+
+    # Try to recover from memory if we don't have a reference in this session
+    if _last_created_file is None:
+        try:
+            from commands.memory import recall
+            mem = recall("last created file")
+            if "is" in mem and "don't" not in mem:
+                val = mem.split(" is ", 1)[-1].rstrip(".")
+                p = Path(val)
+                if p.exists():
+                    _last_created_file = p
+        except Exception:
+            pass
+
+    if _last_created_file is None:
+        return False, "I don't know which file to write to. Please create a file first."
+
+    file_path = _last_created_file
+
+    # Build the prompt
+    ext = file_path.suffix.lower()
+    lang_hint = {
+        ".py": "Write clean Python 3.10+ code with proper error handling and docstrings.",
+        ".js": "Write modern vanilla JavaScript (ES2022+), no frameworks.",
+        ".html": "Write complete, modern HTML5 with embedded CSS and JavaScript.",
+        ".css": "Write modern CSS3 with variables and responsive design.",
+        ".ts": "Write TypeScript with proper types.",
+        ".java": "Write Java 17+ with proper class structure.",
+        ".cpp": "Write modern C++ with proper headers.",
+        ".sh": "Write a bash shell script.",
+        ".bat": "Write a Windows batch script.",
+    }.get(ext, "Write clean, well-commented code.")
+
+    prompt = (
+        f"Generate complete, working code for a file named '{file_path.name}'. "
+        f"Task/Description: {description}. "
+        f"{lang_hint} "
+        f"Output ONLY the raw file content, no explanations, no markdown code fences, no backticks."
+    )
+
+    # Generate code
+    try:
+        from commands.coding_agent import _generate_code
+        code = _generate_code(prompt)
+    except Exception as e:
+        log.warning("Code generation failed: %s", e)
+        code = f"# Could not generate code automatically.\n# Description: {description}\n"
+
+    # Write to file
+    try:
+        file_path.write_text(code, encoding="utf-8")
+        log.info("Wrote code to: %s", file_path)
+    except Exception as e:
+        return False, f"Could not write code to {file_path.name}: {e}"
+
+    # Open in VS Code
+    try:
+        from commands.coding_agent import _open_in_vscode
+        _open_in_vscode(file_path)
+    except Exception:
+        pass
+
+    return True, f"Code written to {file_path.name} and opened in VS Code."
+

@@ -60,6 +60,17 @@ def set_state(s: State) -> None:
     with _state_lock:
         _state = s
     log.info("State → %s", s.value)
+    try:
+        from commands.hud_gui import set_hud_status
+        if s == State.SLEEPING:
+            set_hud_status("Sleeping")
+        elif s == State.AWAKE:
+            set_hud_status("Listening...")
+        elif s == State.ACTING:
+            set_hud_status("Acting...")
+    except Exception:
+        pass
+
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 WAKE_WORDS      = [w.strip().lower() for w in (os.environ.get("WAKE_WORDS") or "jarvis,javris,jarves,jarv").split(",")]
@@ -243,6 +254,12 @@ def speak_offline(text: str) -> None:
 def speak(text: str) -> None:
     """Speak text — ElevenLabs (direct API with strict 4s timeout) if available, else offline fallback."""
     log.info("Speaking: %r", text)
+    try:
+        from commands.hud_gui import log_to_hud
+        log_to_hud("JARVIS", text)
+    except Exception:
+        pass
+
     if not EL_API_KEY or not EL_VOICE_ID:
         speak_offline(text)
         return
@@ -373,13 +390,185 @@ def listen_for_speech(device_idx: int, timeout: float = 6.0, after_speech_silenc
 
 # ─── Command router ──────────────────────────────────────────────────────────
 
+# Command verbs used to detect compound command boundaries
+_COMPOUND_SPLIT_MARKERS = [
+    " and open ", " and create ", " and write ", " and run ",
+    " and launch ", " and start ", " and close ", " and search ",
+    " then open ", " then create ", " then write ", " then run ",
+    " then launch ", " then start ",
+]
+
+
+def _split_compound_command(text: str) -> list[str]:
+    """Split a compound voice command into individual sub-commands."""
+    t_lower = text.lower()
+    for marker in _COMPOUND_SPLIT_MARKERS:
+        if marker in t_lower:
+            idx = t_lower.find(marker)
+            first = text[:idx].strip()
+            second = text[idx + len(marker):].strip()
+            # Recursively split the second part too
+            rest = _split_compound_command(second)
+            if first:
+                return [first] + rest
+    return [text] if text.strip() else []
+
+
 def handle_command(text: str) -> None:
-    """Parse and execute a voice command."""
+    """Parse and execute a voice command. Supports compound 'and/then' chaining."""
+    # Handle compound commands (e.g. "open VS code and create test.py and write code")
+    parts = _split_compound_command(text)
+    if len(parts) > 1:
+        for part in parts:
+            if part.strip():
+                _execute_single_command(part.strip())
+        return
+    _execute_single_command(text)
+
+
+def _execute_single_command(text: str) -> None:
+    """Parse and execute a single voice command."""
     from commands.nlp_parser import parse_command
     result = parse_command(text)
     intent = result["intent"]
     params = result["params"]
     log.info("Intent: %s | Params: %s", intent, params)
+
+    # ── Custom Hackathon Intents ──────────────────────────────────────────────
+    if intent == "close_app":
+        from commands.app_launcher import close_app
+        ok, msg = close_app(params["app"])
+        speak(msg)
+        return
+
+    if intent == "search_software":
+        from commands.app_launcher import search_installed_software
+        ok, msg = search_installed_software(params["query"])
+        speak(msg)
+        return
+
+    if intent == "create_folder":
+        from commands.file_manager import create_folder
+        ok, msg = create_folder(params["folder"])
+        speak(msg)
+        return
+
+    if intent == "delete_file":
+        from commands.file_manager import delete_file_with_confirmation
+        from commands.hud_gui import _hud_instance
+        def run_hud_update(action_type, data):
+            from commands.hud_gui import trigger_hud_confirmation
+            if action_type == "ASK_CONFIRMATION":
+                trigger_hud_confirmation(data[0], data[1])
+        ok, msg = delete_file_with_confirmation(params["file"], update_hud_fn=run_hud_update if _hud_instance else None)
+        speak(msg)
+        return
+
+    if intent == "rename_file":
+        from commands.file_manager import rename_file
+        ok, msg = rename_file(params["old_name"], params["new_name"])
+        speak(msg)
+        return
+
+    if intent == "move_file":
+        from commands.file_manager import move_file
+        ok, msg = move_file(params["file"], params["folder"])
+        speak(msg)
+        return
+
+    if intent == "install_software":
+        from commands.app_launcher import install_software_workflow
+        from commands.hud_gui import _hud_instance, start_hud_plan, set_hud_plan_step_active, set_hud_plan_step_complete, trigger_hud_setup_window
+        def run_hud_update(action_type, data):
+            if action_type == "PLAN_START":
+                start_hud_plan(data)
+            elif action_type == "PLAN_STEP_ACTIVE":
+                set_hud_plan_step_active(data)
+            elif action_type == "PLAN_STEP_COMPLETE":
+                set_hud_plan_step_complete(data)
+            elif action_type == "SHOW_SETUP_WINDOW":
+                trigger_hud_setup_window(data)
+        ok, msg = install_software_workflow(params["software"], update_hud_fn=run_hud_update if _hud_instance else None)
+        speak(msg)
+        return
+
+    if intent == "toggle_wifi":
+        from commands.system_control import toggle_wifi
+        ok, msg = toggle_wifi(params["state"])
+        speak(msg)
+        return
+
+    if intent == "toggle_bluetooth":
+        from commands.system_control import toggle_bluetooth
+        ok, msg = toggle_bluetooth(params["state"])
+        speak(msg)
+        return
+
+    if intent == "toggle_dark_mode":
+        from commands.system_control import toggle_dark_mode
+        ok, msg = toggle_dark_mode(params["state"])
+        speak(msg)
+        return
+
+    if intent == "start_coding_session":
+        from commands.workflow_agent import start_coding_session_workflow
+        from commands.hud_gui import _hud_instance, start_hud_plan, set_hud_plan_step_active, set_hud_plan_step_complete
+        def run_hud_update(action_type, data):
+            if action_type == "PLAN_START":
+                start_hud_plan(data)
+            elif action_type == "PLAN_STEP_ACTIVE":
+                set_hud_plan_step_active(data)
+            elif action_type == "PLAN_STEP_COMPLETE":
+                set_hud_plan_step_complete(data)
+        ok, msg = start_coding_session_workflow(update_hud_fn=run_hud_update if _hud_instance else None)
+        speak(msg)
+        return
+
+    if intent == "file_zip_email":
+        from commands.workflow_agent import file_zip_email_workflow
+        from commands.hud_gui import _hud_instance, start_hud_plan, set_hud_plan_step_active, set_hud_plan_step_complete, trigger_hud_email_window
+        def run_hud_update(action_type, data):
+            if action_type == "PLAN_START":
+                start_hud_plan(data)
+            elif action_type == "PLAN_STEP_ACTIVE":
+                set_hud_plan_step_active(data)
+            elif action_type == "PLAN_STEP_COMPLETE":
+                set_hud_plan_step_complete(data)
+            elif action_type == "SHOW_EMAIL_TRANSMISSION":
+                trigger_hud_email_window(data)
+        ok, msg = file_zip_email_workflow(update_hud_fn=run_hud_update if _hud_instance else None)
+        speak(msg)
+        return
+
+    if intent == "going_home":
+        from commands.workflow_agent import going_home_workflow
+        from commands.hud_gui import _hud_instance, start_hud_plan, set_hud_plan_step_active, set_hud_plan_step_complete, trigger_hud_confirmation
+        def run_hud_update(action_type, data):
+            if action_type == "PLAN_START":
+                start_hud_plan(data)
+            elif action_type == "PLAN_STEP_ACTIVE":
+                set_hud_plan_step_active(data)
+            elif action_type == "PLAN_STEP_COMPLETE":
+                set_hud_plan_step_complete(data)
+            elif action_type == "ASK_CONFIRMATION":
+                trigger_hud_confirmation(data[0], data[1])
+        ok, msg = going_home_workflow(update_hud_fn=run_hud_update if _hud_instance else None)
+        speak(msg)
+        return
+
+    if intent == "vscode_write_code":
+        from commands.vs_code_agent import write_code_in_vscode
+        from commands.hud_gui import _hud_instance, start_hud_plan, set_hud_plan_step_active, set_hud_plan_step_complete
+        def run_hud_update(action_type, data):
+            if action_type == "PLAN_START":
+                start_hud_plan(data)
+            elif action_type == "PLAN_STEP_ACTIVE":
+                set_hud_plan_step_active(data)
+            elif action_type == "PLAN_STEP_COMPLETE":
+                set_hud_plan_step_complete(data)
+        ok, msg = write_code_in_vscode(params["filename"], params["description"], update_hud_fn=run_hud_update if _hud_instance else None)
+        speak(msg)
+        return
 
     # ── Dismiss ──────────────────────────────────────────────────────────────
     if intent == "sleep":
@@ -388,7 +577,16 @@ def handle_command(text: str) -> None:
 
     # ── Jarvis Active State control / Termination ─────────────────────────────
     if intent == "jarvis_off":
-        speak("Shutting down completely. Goodbye, sir.")
+        speak("Saving your work and shutting down completely. Goodbye, sir.")
+        try:
+            from commands.system_control import save_all_unsaved_files
+            save_all_unsaved_files()
+        except Exception:
+            pass
+        try:
+            from commands.ai_brain import _save_history
+        except Exception:
+            pass
         time.sleep(1.5)
         os._exit(0)
 
@@ -470,6 +668,12 @@ def handle_command(text: str) -> None:
         lock_screen(); return
 
     if intent == "shutdown":
+        speak("Saving all open files before shutting down, sir.")
+        try:
+            from commands.system_control import save_all_unsaved_files
+            save_all_unsaved_files()
+        except Exception:
+            pass
         from commands.system_control import shutdown_pc
         _, msg = shutdown_pc()
         speak(msg); return
@@ -640,6 +844,31 @@ def handle_command(text: str) -> None:
         answer = ask(params["query"])
         speak(answer); return
 
+    # ── Run Ollama ────────────────────────────────────────────────────────────
+    if intent == "run_ollama":
+        from commands.app_launcher import run_ollama_in_cmd
+        ok, msg = run_ollama_in_cmd()
+        speak(msg); return
+
+    # ── Create File ───────────────────────────────────────────────────────────
+    if intent == "create_file":
+        from commands.file_manager import create_file
+        ok, msg = create_file(params.get("filename", ""), params.get("location", ""))
+        speak(msg); return
+
+    # ── Write Code to Last File ───────────────────────────────────────────────
+    if intent == "write_code_to_file":
+        speak("Generating code now, sir. One moment.")
+        from commands.file_manager import write_code_to_last_file
+        ok, msg = write_code_to_last_file(params.get("description", ""))
+        speak(msg); return
+
+    # ── Clear Chat History ────────────────────────────────────────────────────
+    if intent == "clear_chat_history":
+        from commands.ai_brain import clear_history
+        msg = clear_history()
+        speak(msg); return
+
     speak("I'm not sure how to do that yet, sir.")
 
 
@@ -670,6 +899,12 @@ def wake_and_listen(device_idx: int, source: str) -> None:
                 break
 
             log.info("Session Command: %r", text)
+            try:
+                from commands.hud_gui import log_to_hud, set_hud_status
+                log_to_hud("YOU", text)
+                set_hud_status("Thinking...")
+            except Exception:
+                pass
 
             from commands.nlp_parser import parse_command
             parsed = parse_command(text)
@@ -904,17 +1139,23 @@ def main() -> int:
             daemon=True,
         ).start()
 
-    # Clap loop (main thread) or keep-alive
+    # Clap loop in background if needed
     if TRIGGER_MODE in ("clap", "both"):
-        return clap_loop(device_idx)
-    else:
-        log.info("Voice-only mode. Waiting...")
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            log.info("Stopped.")
-        return 0
+        threading.Thread(
+            target=clap_loop,
+            args=(device_idx,),
+            daemon=True,
+        ).start()
+
+    # Run HUD GUI on the main thread
+    from commands.hud_gui import HUDApp
+    
+    def start_listening_cb():
+        threading.Thread(target=wake_and_listen, args=(device_idx, "manual"), daemon=True).start()
+        
+    app = HUDApp(start_listening_callback=start_listening_cb, submit_command_callback=handle_command)
+    app.run()
+    return 0
 
 
 if __name__ == "__main__":

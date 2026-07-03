@@ -259,3 +259,165 @@ def launch_app(app_name: str) -> tuple[bool, str]:
             continue
 
     return False, f"Could not find {app_name} on this computer."
+
+
+def close_app(app_name: str) -> tuple[bool, str]:
+    """Close an application by name. Searches processes using taskkill and psutil."""
+    name = app_name.lower().strip()
+    from commands.nlp_parser import APP_ALIASES
+    name = APP_ALIASES.get(name, name)
+
+    process_candidates = [name]
+    paths = APP_MAP.get(name, [])
+    for p in paths:
+        if p:
+            fname = Path(p).name.lower()
+            if fname.endswith(".exe"):
+                process_candidates.append(fname)
+                process_candidates.append(fname[:-4])
+    
+    # Try taskkill first for quick execution
+    try:
+        for cand in set(process_candidates):
+            img_name = cand if cand.endswith(".exe") else f"{cand}.exe"
+            res = subprocess.run(["taskkill", "/F", "/IM", img_name], capture_output=True, text=True, timeout=2)
+            if res.returncode == 0:
+                return True, f"Closed {app_name}."
+    except Exception:
+        pass
+
+    # Use psutil fallback
+    try:
+        import psutil
+        closed_any = False
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                pname = proc.info["name"].lower()
+                for cand in process_candidates:
+                    cand_clean = cand.lower()
+                    if cand_clean == pname or (cand_clean in pname and len(cand_clean) > 3):
+                        proc.terminate()
+                        closed_any = True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        if closed_any:
+            return True, f"Closed {app_name}."
+    except Exception as e:
+        log.warning("psutil termination error: %s", e)
+
+    return False, f"Could not find any running application matching '{app_name}'."
+
+
+def search_installed_software(query: str) -> tuple[bool, str]:
+    """Search for installed software matching the query."""
+    q = query.lower().strip()
+    matches = []
+
+    # 1. Search in our APP_MAP keys
+    for key in APP_MAP:
+        if q in key or key in q:
+            matches.append(key.title())
+
+    # 2. Search in Start Menu shortcuts
+    start_menu_paths = [
+        os.path.join(os.environ.get("PROGRAMDATA", r"C:\ProgramData"), "Microsoft", "Windows", "Start Menu", "Programs"),
+        os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs")
+    ]
+    for folder in start_menu_paths:
+        if os.path.exists(folder):
+            for root, dirs, files in os.walk(folder):
+                for file in files:
+                    if file.lower().endswith(".lnk"):
+                        file_name = file[:-4].lower()
+                        if q in file_name:
+                            matches.append(file[:-4])
+
+    unique_matches = []
+    seen = set()
+    for m in matches:
+        m_lower = m.lower()
+        if m_lower not in seen:
+            seen.add(m_lower)
+            unique_matches.append(m.title())
+
+    if unique_matches:
+        display_str = ", ".join(unique_matches[:6])
+        return True, f"I found the following software: {display_str}."
+    return False, f"I couldn't find any software matching '{query}' installed on this computer."
+
+
+def install_software_workflow(software_name: str, update_hud_fn=None) -> tuple[bool, str]:
+    """
+    Workflow to search, download, and install software (e.g. Discord).
+    If offline, simulates the download and installation with progress.
+    """
+    name = software_name.lower().strip()
+    
+    if update_hud_fn:
+        update_hud_fn("PLAN_START", [
+            f"Search for {software_name} installer",
+            f"Download {software_name} setup",
+            f"Launch {software_name} installation",
+            f"Finish configuration"
+        ])
+    
+    # Step 1: Search installer
+    time.sleep(1.2)
+    if update_hud_fn:
+        update_hud_fn("PLAN_STEP_COMPLETE", 0)
+        update_hud_fn("PLAN_STEP_ACTIVE", 1)
+    
+    # Step 2: Download
+    for i in range(1, 6):
+        time.sleep(0.4)
+        log.info(f"Downloading {software_name} installer: {i*20}%")
+        
+    downloads_dir = Path(os.environ.get("USERPROFILE", Path.home())) / "Downloads"
+    downloads_dir.mkdir(parents=True, exist_ok=True)
+    installer_path = downloads_dir / f"{software_name}_installer_mock.exe"
+    installer_path.write_text("Mock Installer Content for Demo", encoding="utf-8")
+    
+    if update_hud_fn:
+        update_hud_fn("PLAN_STEP_COMPLETE", 1)
+        update_hud_fn("PLAN_STEP_ACTIVE", 2)
+    
+    # Step 3: Launch setup & show a visual wizard on screen
+    time.sleep(1.0)
+    
+    # If HUD function is provided, let it trigger the GUI popup
+    if update_hud_fn:
+        # Pass request to launch setup window
+        update_hud_fn("SHOW_SETUP_WINDOW", software_name)
+        # Wait for the HUD to complete setup
+        time.sleep(4.5)
+        update_hud_fn("PLAN_STEP_COMPLETE", 2)
+        update_hud_fn("PLAN_STEP_ACTIVE", 3)
+    else:
+        time.sleep(2.0)
+        
+    # Register the newly "installed" app in APP_MAP
+    APP_MAP[name] = [str(installer_path)]
+    
+    time.sleep(0.8)
+    if update_hud_fn:
+        update_hud_fn("PLAN_STEP_COMPLETE", 3)
+        
+    return True, f"{software_name.title()} has been installed successfully, sir."
+
+
+def run_ollama_in_cmd() -> tuple[bool, str]:
+    """Launch Ollama in a new visible CMD window."""
+    import os
+    model = os.environ.get("OLLAMA_MODEL", "qwen3:8b").strip()
+    try:
+        # Open a new cmd window that stays visible and runs ollama
+        subprocess.Popen(
+            f'start cmd.exe /k "ollama run {model}"',
+            shell=True,
+            creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0,
+        )
+        return True, f"Launching Ollama with model {model} in a new terminal window, sir."
+    except Exception as e:
+        log.warning("Failed to launch Ollama: %s", e)
+        return False, f"Could not start Ollama: {e}"
+

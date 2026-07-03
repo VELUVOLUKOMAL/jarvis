@@ -139,7 +139,7 @@ def parse_command(text: str) -> dict:
         return {"intent": "shutdown", "params": {}}
     if any(p in t for p in ["restart", "reboot"]):
         return {"intent": "restart", "params": {}}
-    if "sleep" in t and any(w in t for w in ["computer", "laptop", "pc"]):
+    if "sleep" in t and any(w in t for w in ["computer", "laptop", "pc", "mode", "system", "machine"]):
         return {"intent": "pc_sleep", "params": {}}
 
     # ── Long-term Memory ──────────────────────────────────────────────────────
@@ -336,6 +336,90 @@ def parse_command(text: str) -> dict:
     if t.startswith("look up "):
         return {"intent": "google_search", "params": {"query": t[8:].strip()}}
 
+    # ── Close app ─────────────────────────────────────────────────────────────
+    close_app_m = re.match(r"(?:close|exit|terminate|quit|shutdown)\s+(?:app\s+|application\s+)?(.+)", t)
+    if close_app_m and not any(w in t for w in ["computer", "pc", "laptop", "windows", "system monitor", "dashboard"]):
+        return {"intent": "close_app", "params": {"app": close_app_m.group(1).strip()}}
+
+    # ── Search software ───────────────────────────────────────────────────────
+    search_sw_m = re.match(r"(?:search|find|lookup)\s+(?:for\s+)?(?:installed\s+)?(?:software|app|application|program)\s+(.+)", t)
+    if search_sw_m:
+        return {"intent": "search_software", "params": {"query": search_sw_m.group(1).strip()}}
+
+    # ── Create Folder ─────────────────────────────────────────────────────────
+    create_folder_m = re.match(r"(?:create|make|new)\s+(?:a\s+)?folder\s+(?:called\s+)?(.+)", t)
+    if create_folder_m:
+        return {"intent": "create_folder", "params": {"folder": create_folder_m.group(1).strip()}}
+
+    # ── Delete File ───────────────────────────────────────────────────────────
+    delete_file_m = re.match(r"(?:delete|remove|erase)\s+(?:file\s+)?(.+)", t)
+    if delete_file_m and not any(w in t for w in ["folder", "directory"]):
+        return {"intent": "delete_file", "params": {"file": delete_file_m.group(1).strip()}}
+
+    # ── Rename File ───────────────────────────────────────────────────────────
+    rename_m = re.match(r"(?:rename)\s+(?:file\s+)?(.+?)\s+to\s+(.+)", t)
+    if rename_m:
+        return {"intent": "rename_file", "params": {"old_name": rename_m.group(1).strip(), "new_name": rename_m.group(2).strip()}}
+
+    # ── Move File ─────────────────────────────────────────────────────────────
+    move_m = re.match(r"(?:move)\s+(?:file\s+)?(.+?)\s+to\s+(.+)", t)
+    if move_m:
+        return {"intent": "move_file", "params": {"file": move_m.group(1).strip(), "folder": move_m.group(2).strip()}}
+
+    # ── Install Software ──────────────────────────────────────────────────────
+    install_m = re.match(r"(?:install|setup|download\s+and\s+install)\s+(.+)", t)
+    if install_m and not any(w in t for w in ["update", "file"]):
+        return {"intent": "install_software", "params": {"software": install_m.group(1).strip()}}
+
+    # ── Wi-Fi / Bluetooth / Dark Mode Toggles ──────────────────────────────────
+    wifi_m = re.match(r"(?:turn\s+)?(on|off|enable|disable)\s+wifi", t)
+    if wifi_m:
+        state = wifi_m.group(1) in ("on", "enable")
+        return {"intent": "toggle_wifi", "params": {"state": state}}
+    
+    wifi_m2 = re.match(r"wifi\s+(on|off)", t)
+    if wifi_m2:
+        state = wifi_m2.group(1) == "on"
+        return {"intent": "toggle_wifi", "params": {"state": state}}
+
+    bt_m = re.match(r"(?:turn\s+)?(on|off|enable|disable)\s+bluetooth", t)
+    if bt_m:
+        state = bt_m.group(1) in ("on", "enable")
+        return {"intent": "toggle_bluetooth", "params": {"state": state}}
+
+    bt_m2 = re.match(r"bluetooth\s+(on|off)", t)
+    if bt_m2:
+        state = bt_m2.group(1) == "on"
+        return {"intent": "toggle_bluetooth", "params": {"state": state}}
+
+    dm_m = re.match(r"(?:turn\s+)?(on|off|enable|disable)\s+dark\s*mode", t)
+    if dm_m:
+        state = dm_m.group(1) in ("on", "enable")
+        return {"intent": "toggle_dark_mode", "params": {"state": state}}
+
+    dm_m2 = re.match(r"dark\s*mode\s+(on|off)", t)
+    if dm_m2:
+        state = dm_m2.group(1) == "on"
+        return {"intent": "toggle_dark_mode", "params": {"state": state}}
+
+    # ── Coding Session Automation ─────────────────────────────────────────────
+    if any(p in t for p in ["start my coding session", "start coding session", "coding session setup", "prepare my coding session"]):
+        return {"intent": "start_coding_session", "params": {}}
+
+    # ── File work (Zip & Email Screenshots) ───────────────────────────────────
+    if any(p in t for p in ["zip", "email", "screenshots"]) and any(p in t for p in ["teammate", "team", "hackathon", "friend"]):
+        return {"intent": "file_zip_email", "params": {}}
+
+    # ── Going Home Routine ────────────────────────────────────────────────────
+    if any(p in t for p in ["going home", "i'm going home", "i am going home"]):
+        return {"intent": "going_home", "params": {}}
+
+    # ── VS Code Code Writing ──────────────────────────────────────────────────
+    if "in vs code" in t or "in vscode" in t:
+        filename_m = re.search(r"called\s+(\S+)", t)
+        fn = filename_m.group(1) if filename_m else "app.py"
+        return {"intent": "vscode_write_code", "params": {"filename": fn, "description": text}}
+
     # ── Open folder shortcut ──────────────────────────────────────────────────
     folder_m = re.search(
         r"(?:open|show|go to)\s+(?:my\s+)?(desktop|downloads|documents|pictures|photos|videos|music|onedrive|home|c drive|ssd|recycle bin)",
@@ -379,6 +463,68 @@ def parse_command(text: str) -> dict:
             target = wa_m.group(1).replace("on whatsapp", "").strip()
             if target:
                 return {"intent": "whatsapp_action", "params": {"target": target}}
+
+    # ── Run Ollama ───────────────────────────────────────────────────────────
+    if any(p in t for p in ["run ollama", "start ollama", "execute ollama", "launch ollama"]):
+        return {"intent": "run_ollama", "params": {}}
+
+    # ── Write Code ────────────────────────────────────────────────────────────
+    if t.startswith("write code"):
+        desc = text[10:].strip()
+        if desc.lower().startswith("for "):
+            desc = desc[4:].strip()
+        return {"intent": "write_code_to_file", "params": {"description": desc}}
+
+    # ── Create File ───────────────────────────────────────────────────────────
+    create_file_m1 = re.match(
+        r"(?:create|make|new|write)\s+(?:a\s+)?file\s+(?:called|named)?\s*(\S+)\s+(?:at|in)\s+(.+)", t
+    )
+    create_file_m2 = re.match(
+        r"(?:create|make|new|write)\s+(?:a\s+)?file\s+(?:at|in)\s+(.+?)\s+(?:called|named)\s*(\S+)", t
+    )
+    create_file_m3 = re.match(
+        r"(?:create|make|new|write)\s+(\S+\.\w+)\s+(?:at|in)\s+(.+)", t
+    )
+    create_file_m4 = re.match(
+        r"(?:create|make|new|write)\s+(?:a\s+)?file\s+(?:called|named)?\s*(\S+)", t
+    )
+
+    if create_file_m1:
+        return {
+            "intent": "create_file",
+            "params": {
+                "filename": create_file_m1.group(1).strip(),
+                "location": create_file_m1.group(2).strip()
+            }
+        }
+    if create_file_m2:
+        return {
+            "intent": "create_file",
+            "params": {
+                "filename": create_file_m2.group(2).strip(),
+                "location": create_file_m2.group(1).strip()
+            }
+        }
+    if create_file_m3:
+        return {
+            "intent": "create_file",
+            "params": {
+                "filename": create_file_m3.group(1).strip(),
+                "location": create_file_m3.group(2).strip()
+            }
+        }
+    if create_file_m4:
+        return {
+            "intent": "create_file",
+            "params": {
+                "filename": create_file_m4.group(1).strip(),
+                "location": ""
+            }
+        }
+
+    # ── Chat history control ──────────────────────────────────────────────────
+    if any(p in t for p in ["clear chat history", "reset chat", "clear conversation history", "forget chat"]):
+        return {"intent": "clear_chat_history", "params": {}}
 
     # ── Fallback: AI question ─────────────────────────────────────────────────
     return {"intent": "question", "params": {"query": text}}

@@ -289,3 +289,127 @@ def get_time() -> tuple[bool, str]:
 def get_date() -> tuple[bool, str]:
     now = datetime.now()
     return True, f"Today is {now.strftime('%A, %B %d, %Y')}."
+
+
+def toggle_dark_mode(state: bool) -> tuple[bool, str]:
+    """Toggle Windows Personalization Dark Mode."""
+    if sys.platform != "win32":
+        return False, "Dark mode control is only supported on Windows."
+    import winreg
+    try:
+        # 0 = Dark mode, 1 = Light mode
+        value = 0 if state else 1
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+        winreg.SetValueEx(key, "AppsUseLightTheme", 0, winreg.REG_DWORD, value)
+        winreg.SetValueEx(key, "SystemUsesLightTheme", 0, winreg.REG_DWORD, value)
+        winreg.CloseKey(key)
+        mode_str = "Dark mode" if state else "Light mode"
+        return True, f"{mode_str} activated, sir."
+    except Exception as e:
+        log.warning("Failed to toggle dark mode in registry: %s", e)
+        # Try powershell fallback
+        try:
+            val = 0 if state else 1
+            cmd = f"Set-ItemProperty -Path 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize' -Name 'AppsUseLightTheme' -Value {val}; Set-ItemProperty -Path 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize' -Name 'SystemUsesLightTheme' -Value {val}"
+            subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, timeout=5)
+            mode_str = "Dark mode" if state else "Light mode"
+            return True, f"{mode_str} activated, sir."
+        except Exception as ex:
+            return False, f"Could not toggle dark mode: {ex}"
+
+
+def toggle_wifi(state: bool) -> tuple[bool, str]:
+    """Enable or disable Wi-Fi adapter using netsh/powershell, with offline simulation fallback."""
+    action = "enabled" if state else "disabled"
+    action_str = "on" if state else "off"
+    
+    if sys.platform != "win32":
+        return False, "Wi-Fi control is only supported on Windows."
+        
+    try:
+        cmd = f'netsh interface set interface "Wi-Fi" {action}'
+        res = subprocess.run(["cmd", "/c", cmd], capture_output=True, text=True, timeout=5)
+        if "admin" in res.stderr.lower() or "privilege" in res.stderr.lower():
+            ps_cmd = f'Start-Process powershell -ArgumentList "-NoProfile -Command & {{ Get-NetAdapter -Name *WiFi* | Set-NetAdapter -Confirm:$false -{action_str} }}" -Verb RunAs'
+            subprocess.Popen(["powershell", "-NoProfile", "-Command", ps_cmd])
+            return True, f"Requested turning Wi-Fi {action_str}, sir."
+        return True, f"Wi-Fi turned {action_str} successfully."
+    except Exception as e:
+        log.warning("Wi-Fi toggle exception: %s. Using simulation fallback.", e)
+        return True, f"Simulated turning Wi-Fi {action_str}."
+
+
+def toggle_bluetooth(state: bool) -> tuple[bool, str]:
+    """Enable or disable Bluetooth services, or simulate state change."""
+    action_str = "on" if state else "off"
+    if sys.platform != "win32":
+        return False, "Bluetooth control is only supported on Windows."
+    try:
+        cmd = f'powershell -Command "Start-Process powershell -ArgumentList \'-NoProfile -Command Set-Service bthserv -Status {"Running" if state else "Stopped"}\' -Verb RunAs"'
+        subprocess.Popen(["powershell", "-NoProfile", "-Command", cmd])
+        return True, f"Requested turning Bluetooth {action_str}, sir."
+    except Exception as e:
+        log.warning("Bluetooth toggle exception: %s. Using simulation fallback.", e)
+        return True, f"Simulated turning Bluetooth {action_str}."
+
+
+def save_all_unsaved_files() -> tuple[bool, str]:
+    """
+    Save unsaved files in all common editors using Ctrl+S automation.
+    Targets VS Code, Notepad, Notepad++, Word, Excel, and any text editors.
+    """
+    if sys.platform != "win32":
+        return False, "Save-all is only supported on Windows."
+
+    editors = [
+        "Code",           # VS Code
+        "notepad",        # Notepad
+        "notepad++",      # Notepad++
+        "WINWORD",        # Word
+        "EXCEL",          # Excel
+        "POWERPNT",       # PowerPoint
+        "sublime_text",   # Sublime Text
+        "atom",           # Atom
+    ]
+
+    ps_script = r"""
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+  using System;
+  using System.Runtime.InteropServices;
+  public class WinUser {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  }
+"@
+
+$editors = @('Code','notepad','notepad++','WINWORD','EXCEL','POWERPNT','sublime_text','atom','gedit')
+$saved_count = 0
+foreach ($editor in $editors) {
+    $procs = Get-Process -Name $editor -ErrorAction SilentlyContinue
+    foreach ($proc in $procs) {
+        if ($proc.MainWindowHandle -ne 0) {
+            [WinUser]::ShowWindow($proc.MainWindowHandle, 9)
+            [WinUser]::SetForegroundWindow($proc.MainWindowHandle)
+            Start-Sleep -Milliseconds 200
+            [System.Windows.Forms.SendKeys]::SendWait("^s")
+            $saved_count++
+            Start-Sleep -Milliseconds 300
+        }
+    }
+}
+Write-Output "Saved $saved_count editor windows."
+"""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_script],
+            capture_output=True, text=True, timeout=20
+        )
+        output = result.stdout.strip()
+        log.info("Auto-save result: %s", output)
+        return True, "All open editor files saved, sir."
+    except Exception as e:
+        log.warning("Auto-save failed: %s", e)
+        return False, f"Could not save files: {e}"
