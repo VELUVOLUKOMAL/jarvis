@@ -84,17 +84,43 @@ def open_folder(folder_name: str) -> tuple[bool, str]:
     return False, f"I couldn't find any folder named '{folder_name}' on your computer."
 
 
-def _win_search(query: str, root: str = "C:\\", timeout: int = 8) -> list[str]:
-    """Use Windows 'dir /s /b' to find files. Returns list of matching paths."""
+def _win_search(query: str, root: str = "C:\\", timeout: int = 5) -> list[str]:
+    """Search files instantly using the Windows Search Indexer database, falling back to dir /s."""
+    clean_query = query.replace("'", "''")
+    # PowerShell script to query the pre-built Windows Search Index (super fast)
+    ps_cmd = (
+        f"$conn = New-Object -ComObject ADODB.Connection; "
+        f"$conn.Open('Provider=Search.CollatorDSO;Extended Properties=\"Application=Windows\";'); "
+        f"$rs = New-Object -ComObject ADODB.Recordset; "
+        f"$query = \"SELECT System.ItemPathDisplay FROM SystemIndex WHERE System.ItemNameDisplay LIKE '%{clean_query}%' AND System.ItemPathDisplay LIKE '{root.replace('\\', '\\\\')}%'\"; "
+        f"try {{ "
+        f"  $rs.Open($query, $conn); "
+        f"  while (-not $rs.EOF) {{ "
+        f"    Write-Output $rs.Fields.Item('System.ItemPathDisplay').Value; "
+        f"    $rs.MoveNext(); "
+        f"  }} "
+        f"}} catch {{}} "
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=timeout
+        )
+        paths = [line.strip() for line in result.stdout.splitlines() if line.strip() and os.path.exists(line.strip())]
+        if paths:
+            log.info("Windows Indexer search found %d matches for '%s'", len(paths), query)
+            return paths[:20]
+    except Exception as e:
+        log.warning("Indexer search failed: %s. Falling back to dir /s...", e)
+
+    # Fallback to classic dir /s /b
     try:
         result = subprocess.run(
             ["cmd", "/c", f'dir /s /b "{root}\\*{query}*" 2>nul'],
             capture_output=True, text=True, timeout=timeout
         )
         lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
-        return lines[:20]  # cap results
-    except subprocess.TimeoutExpired:
-        return []
+        return lines[:20]
     except Exception:
         return []
 
@@ -119,18 +145,41 @@ def _quick_search(name: str) -> list[str]:
 def find_and_open(name: str) -> tuple[bool, str]:
     """
     Find a file or folder by name and open it.
-    Searches quick locations first, then the whole drive.
+    Strips noise words, searches quick locations first, then the whole drive.
     """
-    # 1. Quick search in common folders
-    matches = _quick_search(name)
+    # Strip common noise words that aren't part of a filename
+    _NOISE = {"song", "file", "video", "document", "photo", "picture", "folder",
+              "directory", "music", "movie", "clip", "audio", "track", "image"}
+    name = name.strip().strip("'\"")
+    words = [w for w in name.lower().split() if w not in _NOISE]
 
-    # 2. If nothing found, search whole C:\
+    def _search(query: str) -> list[str]:
+        res = _quick_search(query)
+        if not res:
+            res = _win_search(query)
+        return res
+
+    # 1. Try full name first
+    matches = _search(name)
+
+    # 2. Strip noise words and retry
     if not matches:
-        log.info("Quick search failed, searching full drive for: %s", name)
-        matches = _win_search(name)
+        cleaned = " ".join(words).strip()
+        if cleaned and cleaned != name.lower():
+            log.info("Retrying search with cleaned query: '%s'", cleaned)
+            matches = _search(cleaned)
+
+    # 3. Try each meaningful word individually (picks best single-word match)
+    if not matches:
+        for word in words:
+            if len(word) > 2:
+                matches = _search(word)
+                if matches:
+                    log.info("Found results with keyword: '%s'", word)
+                    break
 
     if not matches:
-        return False, f"I couldn't find any file or folder named '{name}'."
+        return False, f"I couldn't find any file or folder named '{name}', sir."
 
     target = matches[0]
     try:
@@ -176,47 +225,71 @@ def create_folder(folder_name: str, location: str = "") -> tuple[bool, str]:
 
 
 
-def delete_file_with_confirmation(filename: str, update_hud_fn=None) -> tuple[bool, str]:
-    """Delete a file from Desktop/Downloads with GUI confirmation dialog."""
-    q = filename.lower().strip()
-    desktop = Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop"
-    downloads = Path(os.environ.get("USERPROFILE", Path.home())) / "Downloads"
-    
-    candidates = [desktop / filename, downloads / filename]
-    
+def delete_file_with_confirmation(filename: str, location: str = "", update_hud_fn=None) -> tuple[bool, str]:
+    """Delete a file or folder from Desktop/Downloads (or specified location) with verification."""
+    filename = filename.strip().strip("'\"")
+    if not filename:
+        return False, "No file or folder name specified."
+
     target_path = None
-    for cand in candidates:
-        if cand.exists() and cand.is_file():
+
+    # 1. If location is specified, search only in that location
+    if location:
+        target_dir = _resolve_location(location)
+        cand = target_dir / filename
+        if cand.exists():
             target_path = cand
-            break
-            
-    if target_path is None:
-        matches = _quick_search(filename)
-        if matches:
-            target_path = Path(matches[0])
-            
+        else:
+            # Try a quick search within target_dir
+            try:
+                for item in target_dir.rglob(f"*{filename}*"):
+                    target_path = item
+                    break
+            except Exception:
+                pass
+    else:
+        # 2. No location: search Desktop and Downloads
+        desktop = Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop"
+        downloads = Path(os.environ.get("USERPROFILE", Path.home())) / "Downloads"
+        candidates = [desktop / filename, downloads / filename]
+        for cand in candidates:
+            if cand.exists():
+                target_path = cand
+                break
+        if target_path is None:
+            matches = _quick_search(filename)
+            if matches:
+                target_path = Path(matches[0])
+
     if target_path is None or not target_path.exists():
-        return False, f"I couldn't find any file named '{filename}' to delete."
-        
+        loc_str = f" in '{location}'" if location else ""
+        return False, f"I couldn't find any file or folder named '{filename}'{loc_str}."
+
     confirmed = True
+    item_type = "folder" if target_path.is_dir() else "file"
     if update_hud_fn:
         import queue
         res_queue = queue.Queue()
-        update_hud_fn("ASK_CONFIRMATION", (f"Are you sure you want to delete {target_path.name}?", res_queue))
+        update_hud_fn("ASK_CONFIRMATION", (f"Are you sure you want to delete {item_type} '{target_path.name}'?", res_queue))
         try:
             confirmed = res_queue.get(timeout=10.0)
         except queue.Empty:
             confirmed = False
     else:
         import tkinter.messagebox as mbox
-        confirmed = mbox.askyesno("Confirm Delete", f"Delete file {target_path.name}?")
-        
+        confirmed = mbox.askyesno("Confirm Delete", f"Delete {item_type} '{target_path.name}'?")
+
     if confirmed:
         try:
-            target_path.unlink()
-            return True, f"File {target_path.name} has been deleted."
+            if target_path.is_dir():
+                import shutil
+                shutil.rmtree(target_path)
+                return True, f"Folder {target_path.name} has been deleted."
+            else:
+                target_path.unlink()
+                return True, f"File {target_path.name} has been deleted."
         except Exception as e:
-            return False, f"Failed to delete file: {e}"
+            return False, f"Failed to delete {item_type}: {e}"
     else:
         return True, "Deletion cancelled."
 
@@ -378,27 +451,51 @@ def write_code_to_last_file(description: str) -> tuple[bool, str]:
     """
     global _last_created_file
 
-    # Resolve last created file
-    if _last_created_file is None:
-        try:
-            from commands.memory import recall
-            mem = recall("last created file")
-            if mem and "is" in mem and "don't" not in mem:
-                val = mem.split(" is ", 1)[-1].rstrip(".")
-                p = Path(val)
-                if p.exists() and p.is_file():
-                    _last_created_file = p
-        except Exception:
-            pass
+    # Resolve language specific extension from the description
+    desc_l = description.lower()
+    detected_name = None
+    if "java" in desc_l:
+        detected_name = "Main.java"
+    elif "cpp" in desc_l or "c++" in desc_l:
+        detected_name = "main.cpp"
+    elif " c " in f" {desc_l} " or " c code" in desc_l or " c program" in desc_l:
+        detected_name = "main.c"
+    elif "javascript" in desc_l or " js" in desc_l or "node" in desc_l:
+        detected_name = "main.js"
+    elif "html" in desc_l:
+        detected_name = "index.html"
+    elif "css" in desc_l:
+        detected_name = "style.css"
+    elif "batch" in desc_l or " bat" in desc_l:
+        detected_name = "run.bat"
+    elif "shell" in desc_l or "bash" in desc_l:
+        detected_name = "script.sh"
 
-    # Fallback to main.py in current workspace or Desktop if no valid file is active
-    if _last_created_file is None or not _last_created_file.suffix or _last_created_file.is_dir():
-        default_dir = Path("c:/Users/likith/Downloads/jarvis-main/jarvis-main")
-        if not default_dir.exists():
-            default_dir = Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop"
-        _last_created_file = default_dir / "main.py"
+    default_dir = Path("c:/Users/likith/Downloads/jarvis-main/jarvis-main")
+    if not default_dir.exists():
+        default_dir = Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop"
 
-    file_path = _last_created_file
+    # If the user explicitly specified a language, override the last file to match it
+    if detected_name:
+        file_path = default_dir / detected_name
+        _last_created_file = file_path
+    else:
+        # Resolve last created file
+        if _last_created_file is None:
+            try:
+                from commands.memory import recall
+                mem = recall("last created file")
+                if mem and "is" in mem and "don't" not in mem:
+                    val = mem.split(" is ", 1)[-1].rstrip(".")
+                    p = Path(val)
+                    if p.exists() and p.is_file():
+                        _last_created_file = p
+            except Exception:
+                pass
+
+        if _last_created_file is None or not _last_created_file.suffix or _last_created_file.is_dir():
+            _last_created_file = default_dir / "main.py"
+        file_path = _last_created_file
 
     # Build the prompt
     ext = file_path.suffix.lower()
@@ -408,8 +505,9 @@ def write_code_to_last_file(description: str) -> tuple[bool, str]:
         ".html": "Write complete, modern HTML5 with embedded CSS and JavaScript.",
         ".css": "Write modern CSS3 with variables and responsive design.",
         ".ts": "Write TypeScript with proper types.",
-        ".java": "Write Java 17+ with proper class structure.",
+        ".java": "Write Java 17+ with proper class structure and a public class Main.",
         ".cpp": "Write modern C++ with proper headers.",
+        ".c": "Write clean C99 code with stdio.h, proper headers and a main function.",
         ".sh": "Write a bash shell script.",
         ".bat": "Write a Windows batch script.",
     }.get(ext, "Write clean, well-commented code.")

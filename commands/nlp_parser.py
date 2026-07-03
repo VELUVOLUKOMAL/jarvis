@@ -397,10 +397,54 @@ def parse_command(text: str) -> dict:
             }
         }
 
-    # ── Delete File ───────────────────────────────────────────────────────────
-    delete_file_m = re.match(r"(?:delete|remove|erase)\s+(?:file\s+)?(.+)", t)
-    if delete_file_m and not any(w in t for w in ["folder", "directory"]):
-        return {"intent": "delete_file", "params": {"file": delete_file_m.group(1).strip()}}
+    # ── Delete File / Folder ──────────────────────────────────────────────────
+    delete_m1 = re.match(
+        r"(?:delete|remove|erase)\s+(?:file\s+|folder\s+|directory\s+)?(?:called|named)?\s*(.+?)\s+(?:at|in)\s+(.+)", t
+    )
+    delete_m2 = re.match(
+        r"(?:delete|remove|erase)\s+(?:file\s+|folder\s+|directory\s+)?(?:at|in)\s+(.+?)\s+(?:called|named)?\s*(.+)", t
+    )
+    delete_m3 = re.match(
+        r"(?:delete|remove|erase)\s+(?:file\s+|folder\s+|directory\s+)?(?:called|named)?\s*(.+)", t
+    )
+
+    if delete_m1:
+        return {
+            "intent": "delete_file",
+            "params": {
+                "file": delete_m1.group(1).strip(),
+                "location": delete_m1.group(2).strip()
+            }
+        }
+    if delete_m2:
+        return {
+            "intent": "delete_file",
+            "params": {
+                "file": delete_m2.group(2).strip(),
+                "location": delete_m2.group(1).strip()
+            }
+        }
+    if delete_m3:
+        name = delete_m3.group(1).strip()
+        name_l = name.lower()
+        loc = ""
+        if name_l.startswith("in ") or name_l.startswith("at "):
+            parts = name.split(None, 1)
+            if len(parts) == 2:
+                subparts = parts[1].split(None, 1)
+                if len(subparts) == 2:
+                    loc = subparts[0]
+                    name = subparts[1]
+                else:
+                    loc = parts[1]
+                    name = ""
+        return {
+            "intent": "delete_file",
+            "params": {
+                "file": name,
+                "location": loc
+            }
+        }
 
     # ── Rename File ───────────────────────────────────────────────────────────
     rename_m = re.match(r"(?:rename)\s+(?:file\s+)?(.+?)\s+to\s+(.+)", t)
@@ -459,6 +503,16 @@ def parse_command(text: str) -> dict:
     # ── Going Home Routine ────────────────────────────────────────────────────
     if any(p in t for p in ["going home", "i'm going home", "i am going home"]):
         return {"intent": "going_home", "params": {}}
+
+    # ── Open existing file/folder in VS Code ──────────────────────────────────
+    open_vs_m = re.search(r"(?:open|start|run|launch)\s+(.+?)\s+(?:in|using)\s+(?:vs\s*code|vscode)", t)
+    if open_vs_m:
+        path_or_name = open_vs_m.group(1).strip()
+        for clean_word in ["this file", "this folder", " folder", " file"]:
+            if path_or_name.lower().endswith(clean_word):
+                path_or_name = path_or_name[:-len(clean_word)].strip()
+        path_or_name = path_or_name.strip("'\"")
+        return {"intent": "open_in_vscode", "params": {"path_or_name": path_or_name}}
 
     # ── VS Code Code Writing ──────────────────────────────────────────────────
     if "in vs code" in t or "in vscode" in t:

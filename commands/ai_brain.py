@@ -13,8 +13,13 @@ from pathlib import Path
 from datetime import datetime
 
 import requests
+from dotenv import load_dotenv
 
 log = logging.getLogger("jarvis.ai_brain")
+
+# Load environment variables from the root folder .env
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 
 OLLAMA_URL = (os.environ.get("OLLAMA_URL") or "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = (os.environ.get("OLLAMA_MODEL") or "qwen3:8b").strip()

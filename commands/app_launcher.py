@@ -225,7 +225,16 @@ def launch_app(app_name: str) -> tuple[bool, str]:
             candidates = [lnk_path]
 
     if not candidates:
-        return False, f"I don't know how to open {app_name}. You can add it to the app list."
+        # App not found — fall back to searching the file system for a file/folder with this name
+        log.info("App '%s' not in known list, searching file system...", app_name)
+        try:
+            from commands.file_manager import find_and_open
+            ok, msg = find_and_open(app_name)
+            if ok:
+                return True, msg
+        except Exception as e:
+            log.warning("File search fallback failed: %s", e)
+        return False, f"I couldn't find anything named '{app_name}' on your computer, sir."
 
     for path in candidates:
         if not path:

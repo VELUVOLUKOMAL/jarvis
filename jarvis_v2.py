@@ -480,7 +480,7 @@ def _execute_single_command(text: str) -> None:
             from commands.hud_gui import trigger_hud_confirmation
             if action_type == "ASK_CONFIRMATION":
                 trigger_hud_confirmation(data[0], data[1])
-        ok, msg = delete_file_with_confirmation(params["file"], update_hud_fn=run_hud_update if _hud_instance else None)
+        ok, msg = delete_file_with_confirmation(params["file"], params.get("location", ""), update_hud_fn=run_hud_update if _hud_instance else None)
         speak(msg)
         return
 
@@ -850,6 +850,35 @@ def _execute_single_command(text: str) -> None:
         from commands.file_manager import find_and_open
         ok, msg = find_and_open(params.get("name", ""))
         speak(msg); return
+
+    # ── Open file/folder in VS Code ───────────────────────────────────────────
+    if intent == "open_in_vscode":
+        from pathlib import Path as _Path
+        from commands.coding_agent import _open_in_vscode
+        from commands.file_manager import FOLDER_SHORTCUTS, _win_search, _quick_search
+        path_str = params.get("path_or_name", "").strip()
+        target = None
+
+        # 1. Direct absolute path check
+        p = _Path(path_str)
+        if p.exists():
+            target = p
+        # 2. Known folder shortcut (e.g. "downloads", "desktop")
+        elif path_str.lower() in FOLDER_SHORTCUTS:
+            target = FOLDER_SHORTCUTS[path_str.lower()]
+        else:
+            # 3. Quick search then full Windows Indexer search
+            speak(f"Searching for {path_str}, one moment sir.")
+            matches = _quick_search(path_str) or _win_search(path_str)
+            if matches:
+                target = _Path(matches[0])
+
+        if target and target.exists():
+            _open_in_vscode(target)
+            speak(f"Opened {target.name} in VS Code, sir.")
+        else:
+            speak(f"I couldn't find '{path_str}' on your system, sir.")
+        return
 
     # ── App ────────────────────────────────────────────────────────────────────
     if intent == "open_app":
