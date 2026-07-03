@@ -407,18 +407,45 @@ def install_software_workflow(software_name: str, update_hud_fn=None) -> tuple[b
 
 
 def run_ollama_in_cmd() -> tuple[bool, str]:
-    """Launch Ollama in a new visible CMD window."""
-    import os
+    """
+    Launch Ollama in visible CMD windows.
+    - Window 1: 'ollama serve'  → starts the local AI server (so JARVIS can use it)
+    - Window 2: 'ollama run <model>' → interactive chat for the user
+    Skips 'ollama serve' window if Ollama is already running.
+    """
+    import os, socket
     model = os.environ.get("OLLAMA_MODEL", "qwen3:8b").strip()
+
+    # Check if Ollama server is already up
+    ollama_already_running = False
     try:
-        # Open a new cmd window that stays visible and runs ollama
+        with socket.create_connection(("localhost", 11434), timeout=1):
+            ollama_already_running = True
+    except OSError:
+        pass
+
+    try:
+        if not ollama_already_running:
+            # Start ollama serve in a background cmd window
+            subprocess.Popen(
+                'start "Ollama Server" cmd.exe /k "ollama serve"',
+                shell=True,
+            )
+            import time as _t
+            _t.sleep(2)  # Give server a moment to boot
+
+        # Open interactive model window for the user
         subprocess.Popen(
-            f'start cmd.exe /k "ollama run {model}"',
+            f'start "Ollama {model}" cmd.exe /k "ollama run {model}"',
             shell=True,
-            creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0,
         )
-        return True, f"Launching Ollama with model {model} in a new terminal window, sir."
+
+        if ollama_already_running:
+            return True, f"Ollama is already running. Opened interactive {model} window for you, sir."
+        else:
+            return True, f"Starting Ollama server and launching {model} in a new terminal, sir."
     except Exception as e:
         log.warning("Failed to launch Ollama: %s", e)
         return False, f"Could not start Ollama: {e}"
+
 

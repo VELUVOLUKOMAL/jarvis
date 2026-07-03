@@ -19,7 +19,8 @@ log = logging.getLogger("jarvis.ai_brain")
 OLLAMA_URL = (os.environ.get("OLLAMA_URL") or "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = (os.environ.get("OLLAMA_MODEL") or "qwen3:8b").strip()
 GEMINI_API_KEY = (os.environ.get("GEMINI_API_KEY") or "").strip()
-GEMINI_MODEL = (os.environ.get("GEMINI_MODEL") or "gemini-1.5-flash").strip()
+GEMINI_MODEL = (os.environ.get("GEMINI_MODEL") or "gemini-2.0-flash").strip()
+GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
 
 # Persistent history file
 HISTORY_FILE = Path(os.environ.get("USERPROFILE", Path.home())) / ".jarvis_history.json"
@@ -104,44 +105,66 @@ def _build_context_prompt(query: str) -> str:
 def _ask_gemini(query: str) -> str | None:
     if not GEMINI_API_KEY:
         return None
-    try:
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-        )
-        # Build contents with history for Gemini
-        history = _load_history()
-        contents = []
-        for turn in history[-8:]:
-            contents.append({
-                "role": "user" if turn["role"] == "user" else "model",
-                "parts": [{"text": turn["content"]}]
-            })
-        contents.append({"role": "user", "parts": [{"text": f"{_SYSTEM_PROMPT}\n\nUser: {query}"}]})
+    # Build contents with history for Gemini
+    history = _load_history()
+    contents = []
+    for turn in history[-8:]:
+        contents.append({
+            "role": "user" if turn["role"] == "user" else "model",
+            "parts": [{"text": turn["content"]}]
+        })
+    contents.append({"role": "user", "parts": [{"text": f"{_SYSTEM_PROMPT}\n\nUser: {query}"}]})
+    payload = {"contents": contents}
 
-        payload = {"contents": contents}
-        r = requests.post(url, json=payload, timeout=12)
-        r.raise_for_status()
-        data = r.json()
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        return text.strip()
-    except Exception as e:
-        log.warning("Gemini failed: %s", e)
-        return None
+    # Try each model in order until one works
+    models_to_try = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
+    extended_models = []
+    for m in models_to_try:
+        if m not in extended_models:
+            extended_models.append(m)
+        latest = f"{m}-latest" if not m.endswith("-latest") else m
+        if latest not in extended_models:
+            extended_models.append(latest)
+
+    for model in extended_models:
+        for api_ver in ["v1", "v1beta"]:
+            try:
+                url = (
+                    f"https://generativelanguage.googleapis.com/{api_ver}/models/"
+                    f"{model}:generateContent?key={GEMINI_API_KEY}"
+                )
+                r = requests.post(url, json=payload, timeout=12)
+                if r.status_code == 404:
+                    continue  # Try next endpoint version or next model
+                r.raise_for_status()
+                data = r.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                return text.strip()
+            except Exception as e:
+                log.warning("Gemini failed for model '%s' on %s: %s", model, api_ver, e)
+                continue
+    return None
 
 
 def _ask_ollama(query: str) -> str | None:
     model_to_use = OLLAMA_MODEL
+    # Quick availability check — skip entirely if Ollama is not running
     try:
-        r_tags = requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
-        if r_tags.status_code == 200:
-            available = [m["name"] for m in r_tags.json().get("models", [])]
-            if model_to_use not in available and available:
-                matched = next((m for m in available if model_to_use.split(":")[0] in m), available[0])
-                model_to_use = matched
-                log.info("Configured Ollama model '%s' not found. Using '%s' instead.", OLLAMA_MODEL, model_to_use)
+        r_tags = requests.get(f"{OLLAMA_URL}/api/tags", timeout=1.5)
+        if r_tags.status_code != 200:
+            log.warning("Ollama server returned status code %s, skipping.", r_tags.status_code)
+            return None
+        available = [m["name"] for m in r_tags.json().get("models", [])]
+        if model_to_use not in available and available:
+            matched = next((m for m in available if model_to_use.split(":")[0] in m), available[0])
+            model_to_use = matched
+            log.info("Configured Ollama model '%s' not found. Using '%s' instead.", OLLAMA_MODEL, model_to_use)
+        elif not available:
+            log.warning("Ollama has no models downloaded! Please run 'ollama pull qwen2.5:7b' in cmd.")
+            return None
     except Exception as e:
-        log.warning("Could not verify Ollama tags: %s", e)
+        log.warning("Ollama not reachable on %s: %s", OLLAMA_URL, e)
+        return None
 
     # Build prompt with history context
     prompt_with_history = _build_context_prompt(query)
@@ -154,9 +177,9 @@ def _ask_ollama(query: str) -> str | None:
                 "prompt": prompt_with_history,
                 "system": _SYSTEM_PROMPT,
                 "stream": False,
-                "options": {"num_predict": 500, "temperature": 0.2},
+                "options": {"num_predict": 300, "temperature": 0.2},
             },
-            timeout=12,
+            timeout=25,
         )
         r.raise_for_status()
         text = r.json().get("response", "").strip()
@@ -167,6 +190,7 @@ def _ask_ollama(query: str) -> str | None:
     except Exception as e:
         log.warning("Ollama execution failed for model '%s': %s", model_to_use, e)
         return None
+
 
 
 def is_ollama_available() -> bool:

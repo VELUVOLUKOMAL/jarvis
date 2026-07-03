@@ -352,18 +352,19 @@ class HUDApp:
             self._draw_mic_button("idle")
             
         # Re-create/modify status label
-        for widget in self.right_pane.winfo_children():
-            # Find status frame children
-            if isinstance(widget, tk.Frame) and widget.winfo_y() == 0:
-                pass
-        # Easy way: find by label name or update directly
-        # We can scan right pane children
         for child in self.right_pane.winfo_children():
             if isinstance(child, tk.Frame):
                 # Search inside status frame
                 for sub in child.winfo_children():
-                    if sub.cget("text") not in ["⚡ SYSTEM STATUS", ""]:
-                        sub.config(text=self.status_text, fg=self.status_color)
+                    try:
+                        txt = sub.cget("text")
+                    except Exception:
+                        continue  # widget doesn't support -text (e.g. Frame)
+                    if txt not in ["⚡ SYSTEM STATUS", ""]:
+                        try:
+                            sub.config(text=self.status_text, fg=self.status_color)
+                        except Exception:
+                            pass
                         break
 
     def start_plan(self, steps: list[str]):

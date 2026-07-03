@@ -370,21 +370,25 @@ def write_code_to_last_file(description: str) -> tuple[bool, str]:
     """
     global _last_created_file
 
-    # Try to recover from memory if we don't have a reference in this session
+    # Resolve last created file
     if _last_created_file is None:
         try:
             from commands.memory import recall
             mem = recall("last created file")
-            if "is" in mem and "don't" not in mem:
+            if mem and "is" in mem and "don't" not in mem:
                 val = mem.split(" is ", 1)[-1].rstrip(".")
                 p = Path(val)
-                if p.exists():
+                if p.exists() and p.is_file():
                     _last_created_file = p
         except Exception:
             pass
 
-    if _last_created_file is None:
-        return False, "I don't know which file to write to. Please create a file first."
+    # Fallback to main.py in current workspace or Desktop if no valid file is active
+    if _last_created_file is None or not _last_created_file.suffix or _last_created_file.is_dir():
+        default_dir = Path("c:/Users/likith/Downloads/jarvis-main/jarvis-main")
+        if not default_dir.exists():
+            default_dir = Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop"
+        _last_created_file = default_dir / "main.py"
 
     file_path = _last_created_file
 

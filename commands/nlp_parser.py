@@ -34,18 +34,29 @@ APP_ALIASES: dict[str, str] = {
     "visual studio code": "vs code",
     "vscode": "vs code",
     "vs code": "vs code",
+    "vs": "vs code",
+    "visual studio": "vs code",
+    "code editor": "vs code",
     "code": "vs code",
     "google chrome": "chrome",
     "microsoft edge": "edge",
     "file explorer": "explorer",
     "windows explorer": "explorer",
+    "file manager": "explorer",
     "files": "explorer",
+    "my files": "explorer",
+    "folder": "explorer",
     "terminal": "windows terminal",
     "command prompt": "cmd",
     "command line": "cmd",
     "anti gravity": "antigravity",
     "anti-gravity": "antigravity",
     "photoshop": "photoshop",
+    "word": "microsoft word",
+    "excel": "microsoft excel",
+    "powerpoint": "microsoft powerpoint",
+    "notepad": "notepad",
+    "paint": "mspaint",
 }
 
 # Known folder names
@@ -315,7 +326,12 @@ def parse_command(text: str) -> dict:
     yt_m = re.search(r"(?:search|play|find|look up)\s+(.+?)\s+(?:on|in)\s+youtube", t)
     if yt_m:
         return {"intent": "youtube_search", "params": {"query": yt_m.group(1).strip()}}
-    if t.startswith("play ") and not any(w in t for w in ["music", "song", "track", "playlist"]):
+    # "youtube and play song" / "youtube play X"
+    yt_play_m = re.search(r"youtube\s+(?:and\s+)?(?:play|search|find)\s+(.+)", t)
+    if yt_play_m:
+        return {"intent": "youtube_search", "params": {"query": yt_play_m.group(1).strip()}}
+    # "play <song> on youtube" or "play song" as YouTube search
+    if t.startswith("play ") and not any(w in t for w in ["music", "track", "playlist"]):
         query = t[5:].strip()
         if query:
             return {"intent": "youtube_search", "params": {"query": query}}
@@ -433,6 +449,23 @@ def parse_command(text: str) -> dict:
     if find_m:
         return {"intent": "find_file", "params": {"name": find_m.group(1).strip()}}
 
+    # ── Smart overrides for complex open commands ─────────────────────────────
+    # Handles "open chrome youtube song", "open chrome search for x", etc.
+    chrome_query_m = re.search(r"(?:open|start|run|launch)\s+(?:chrome|google\s+chrome|browser|edge)\s+(?:and\s+)?(?:search|play|find)?\s*(.+)", t)
+    if chrome_query_m:
+        query = chrome_query_m.group(1).strip()
+        if "youtube" in query:
+            yt_q = query.replace("youtube", "").replace("and play", "").replace("play", "").replace("search", "").strip()
+            if yt_q:
+                return {"intent": "youtube_search", "params": {"query": yt_q}}
+            return {"intent": "open_website", "params": {"url": "https://www.youtube.com", "name": "youtube"}}
+        return {"intent": "google_search", "params": {"query": query}}
+
+    # Handles "open calculator code", "open python", "open code", "open script"
+    if any(p in t for p in ["open code", "open python code", "open calculator code", "open script", "open python file", "open python"]):
+        if not t.startswith("open python interpreter"):
+            return {"intent": "open_app", "params": {"app": "vs code"}}
+
     # ── Open website / app / folder ───────────────────────────────────────────
     open_m = re.search(
         r"(?:open|go to|browse|navigate to|take me to)\s+(.+?)(?:\s+(?:website|site|page|app|application))?$", t
@@ -449,7 +482,19 @@ def parse_command(text: str) -> dict:
             return {"intent": "open_folder", "params": {"folder": target_norm}}
         return {"intent": "open_app", "params": {"app": target_norm}}
 
-    # ── Launch / Start ────────────────────────────────────────────────────────
+    # ── Run Ollama — MUST be before the generic launch_m regex ───────────────
+    # Catches mishearings: "turn ulama", "run olama", "run a llama", "open llama" etc.
+    _OLLAMA_SOUNDS_LIKE = [
+        "ollama", "olama", "ulama", "a llama", "llama", "ulamma",
+        "allama", "olomah", "ulma", "ola ma", "orama", "olan", "olama"
+    ]
+    _OLLAMA_VERBS = ["run", "start", "launch", "execute", "turn", "open", "load"]
+    for verb in _OLLAMA_VERBS:
+        for sound in _OLLAMA_SOUNDS_LIKE:
+            if f"{verb} {sound}" in t:
+                return {"intent": "run_ollama", "params": {}}
+
+    # ── Launch / Start (generic — after Ollama check) ─────────────────────────
     launch_m = re.search(r"(?:launch|start|run|execute)\s+(.+?)(?:\s+(?:app|application|program))?$", t)
     if launch_m:
         app_name = launch_m.group(1).strip()
@@ -464,12 +509,19 @@ def parse_command(text: str) -> dict:
             if target:
                 return {"intent": "whatsapp_action", "params": {"target": target}}
 
-    # ── Run Ollama ───────────────────────────────────────────────────────────
+    # ── Run Ollama (legacy, now covered above) ────────────────────────────────
     if any(p in t for p in ["run ollama", "start ollama", "execute ollama", "launch ollama"]):
         return {"intent": "run_ollama", "params": {}}
 
     # ── Write Code ────────────────────────────────────────────────────────────
-    if any(p in t for p in ["write code", "write python code", "write some code", "generate code", "write python script", "generate python code"]):
+    # Catches: "write python code of hello world", "python code hello world",
+    # "write a hello world", "code hello world", "generate code for..."
+    _WRITE_CODE_TRIGGERS = [
+        "write code", "write python code", "write some code", "generate code",
+        "write python script", "generate python code", "python code",
+        "write a program", "write program", "code for", "write script"
+    ]
+    if any(p in t for p in _WRITE_CODE_TRIGGERS):
         desc = text
         for prefix in ["write python code of", "write python code for", "write python code to", "write python code",
                        "write code of", "write code for", "write code to", "write code",
