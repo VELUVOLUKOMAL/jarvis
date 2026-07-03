@@ -156,7 +156,7 @@ def _ask_ollama(query: str) -> str | None:
                 "stream": False,
                 "options": {"num_predict": 500, "temperature": 0.2},
             },
-            timeout=60,
+            timeout=12,
         )
         r.raise_for_status()
         text = r.json().get("response", "").strip()

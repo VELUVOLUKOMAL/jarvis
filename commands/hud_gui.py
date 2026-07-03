@@ -105,7 +105,7 @@ class HUDApp:
             font=("Consolas", 11, "bold"), padx=15, cursor="hand2"
         )
         min_btn.pack(side="right", fill="y")
-        min_btn.bind("<Button-1>", lambda e: self.root.iconify())
+        min_btn.bind("<Button-1>", lambda e: self._minimize())
         
         # Splitting Layout: Left (Chat, Mic) vs Right (Stats, Plan)
         self.left_pane = tk.Frame(self.main_container, bg=C["bg"], padx=10, pady=10)
@@ -679,6 +679,21 @@ class HUDApp:
             font=("Consolas", 9, "bold"), bd=0, padx=15
         ).pack(side="left", padx=10)
 
+    def _minimize(self):
+        """Minimize the HUD by hiding it. Click tray or press Ctrl+Shift+J to restore."""
+        self.root.withdraw()
+        # Schedule auto-restore after 3 minutes in case user forgets
+        self.root.after(180000, self._restore)
+
+    def _restore(self):
+        """Restore the HUD window."""
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+        except Exception:
+            pass
+
     def close(self):
         self._running = False
         global _hud_instance
@@ -690,6 +705,8 @@ class HUDApp:
         os._exit(0)
 
     def run(self):
+        # Bind Ctrl+Shift+J to restore the window from anywhere
+        self.root.bind_all("<Control-Shift-J>", lambda e: self._restore())
         self.root.mainloop()
 
 # --- Thread-Safe Public APIs to interact with HUD ---

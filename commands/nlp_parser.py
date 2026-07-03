@@ -469,13 +469,22 @@ def parse_command(text: str) -> dict:
         return {"intent": "run_ollama", "params": {}}
 
     # ── Write Code ────────────────────────────────────────────────────────────
-    if t.startswith("write code"):
-        desc = text[10:].strip()
-        if desc.lower().startswith("for "):
-            desc = desc[4:].strip()
+    if any(p in t for p in ["write code", "write python code", "write some code", "generate code", "write python script", "generate python code"]):
+        desc = text
+        for prefix in ["write python code of", "write python code for", "write python code to", "write python code",
+                       "write code of", "write code for", "write code to", "write code",
+                       "generate python code of", "generate python code for", "generate python code to", "generate python code",
+                       "generate code of", "generate code for", "generate code to", "generate code",
+                       "write python script of", "write python script for", "write python script to", "write python script"]:
+            if t.startswith(prefix):
+                desc = text[len(prefix):].strip()
+                break
         return {"intent": "write_code_to_file", "params": {"description": desc}}
 
     # ── Create File ───────────────────────────────────────────────────────────
+    if t in ["create a python file", "create python file", "make a python file", "make python file", "create a python script", "create python script"]:
+        return {"intent": "create_file", "params": {"filename": "main.py", "location": ""}}
+
     create_file_m1 = re.match(
         r"(?:create|make|new|write)\s+(?:a\s+)?file\s+(?:called|named)?\s*(\S+)\s+(?:at|in)\s+(.+)", t
     )

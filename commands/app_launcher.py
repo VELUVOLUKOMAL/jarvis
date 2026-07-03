@@ -40,6 +40,7 @@ APP_MAP: dict[str, list[str]] = {
     "chrome": [
         os.path.join(_PROGFILES, "Google", "Chrome", "Application", "chrome.exe"),
         os.path.join(_PROGFILESX86, "Google", "Chrome", "Application", "chrome.exe"),
+        os.path.join(_LOCAL, "Google", "Chrome", "Application", "chrome.exe"),
         shutil.which("google-chrome") or "",
         shutil.which("chrome") or "",
     ],
