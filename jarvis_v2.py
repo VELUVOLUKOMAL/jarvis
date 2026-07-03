@@ -865,6 +865,23 @@ def _execute_single_command(text: str) -> None:
         answer = ask(params["query"])
         speak(answer); return
 
+    # ── Check Ollama Status ───────────────────────────────────────────────────
+    if intent == "check_ollama":
+        from commands.ai_brain import OLLAMA_URL, OLLAMA_MODEL
+        import requests
+        try:
+            r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
+            if r.status_code == 200:
+                available = [m["name"] for m in r.json().get("models", [])]
+                models_str = ", ".join(available) if available else "none"
+                msg = f"Ollama server is connected. Available models: {models_str}. Configured model is {OLLAMA_MODEL}."
+            else:
+                msg = f"Ollama server returned status code {r.status_code}."
+        except Exception as e:
+            msg = f"Could not connect to Ollama server. Error: {e}."
+        speak(msg)
+        return
+
     # ── Run Ollama ────────────────────────────────────────────────────────────
     if intent == "run_ollama":
         from commands.app_launcher import run_ollama_in_cmd

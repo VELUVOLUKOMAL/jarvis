@@ -482,6 +482,10 @@ def parse_command(text: str) -> dict:
             return {"intent": "open_folder", "params": {"folder": target_norm}}
         return {"intent": "open_app", "params": {"app": target_norm}}
 
+    # ── Check Ollama Status ───────────────────────────────────────────────────
+    if any(p in t for p in ["is ollama connected", "check ollama", "ollama status", "is llama connected", "olama status", "is olama connected"]):
+        return {"intent": "check_ollama", "params": {}}
+
     # ── Run Ollama — MUST be before the generic launch_m regex ───────────────
     # Catches mishearings: "turn ulama", "run olama", "run a llama", "open llama" etc.
     _OLLAMA_SOUNDS_LIKE = [

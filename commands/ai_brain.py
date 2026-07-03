@@ -21,6 +21,7 @@ OLLAMA_MODEL = (os.environ.get("OLLAMA_MODEL") or "qwen3:8b").strip()
 GEMINI_API_KEY = (os.environ.get("GEMINI_API_KEY") or "").strip()
 GEMINI_MODEL = (os.environ.get("GEMINI_MODEL") or "gemini-2.0-flash").strip()
 GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+XAI_API_KEY = (os.environ.get("XAI_API_KEY") or "").strip()
 
 # Persistent history file
 HISTORY_FILE = Path(os.environ.get("USERPROFILE", Path.home())) / ".jarvis_history.json"
@@ -146,6 +147,40 @@ def _ask_gemini(query: str) -> str | None:
     return None
 
 
+def _ask_xai(query: str) -> str | None:
+    if not XAI_API_KEY:
+        return None
+    try:
+        url = "https://api.x.ai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {XAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        history = _load_history()
+        messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
+        for turn in history[-8:]:
+            messages.append({
+                "role": "user" if turn["role"] == "user" else "assistant",
+                "content": turn["content"]
+            })
+        messages.append({"role": "user", "content": query})
+        
+        payload = {
+            "model": "grok-beta",
+            "messages": messages,
+            "temperature": 0.2
+        }
+        
+        r = requests.post(url, json=payload, headers=headers, timeout=12)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        log.warning("xAI API failed: %s", e)
+        return None
+
+
+
 def _ask_ollama(query: str) -> str | None:
     model_to_use = OLLAMA_MODEL
     # Quick availability check — skip entirely if Ollama is not running
@@ -216,10 +251,15 @@ def ask(query: str) -> str:
     if answer:
         log.info("AI answer via Ollama.")
     else:
-        # 2. Gemini (online, fallback)
-        answer = _ask_gemini(query)
+        # 2. xAI Grok (primary online fallback)
+        answer = _ask_xai(query)
         if answer:
-            log.info("AI answer via Gemini.")
+            log.info("AI answer via xAI.")
+        else:
+            # 3. Gemini (secondary online fallback)
+            answer = _ask_gemini(query)
+            if answer:
+                log.info("AI answer via Gemini.")
 
     if not answer:
         log.warning("Both AI providers unavailable.")
@@ -282,3 +322,34 @@ def ask(query: str) -> str:
     clean_answer = re.sub(r"\*+", "", answer).strip()
     _append_to_history("assistant", clean_answer)
     return clean_answer
+
+
+def warmup_ollama() -> None:
+    """Warm up the Ollama model in the background on startup."""
+    def _warmup():
+        try:
+            r_tags = requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
+            if r_tags.status_code == 200:
+                available = [m["name"] for m in r_tags.json().get("models", [])]
+                model_to_use = OLLAMA_MODEL
+                if model_to_use not in available and available:
+                    matched = next((m for m in available if model_to_use.split(":")[0] in m), available[0])
+                    model_to_use = matched
+                log.info("Warming up Ollama model '%s' in background...", model_to_use)
+                
+                # Send empty prompt to load the model into memory
+                requests.post(
+                    f"{OLLAMA_URL}/api/generate",
+                    json={"model": model_to_use, "prompt": "", "stream": False},
+                    timeout=30
+                )
+                log.info("Ollama model '%s' warmed up successfully.", model_to_use)
+        except Exception as e:
+            log.debug("Ollama warmup failed: %s", e)
+            
+    import threading
+    threading.Thread(target=_warmup, daemon=True).start()
+
+# Initialize warmup on import
+warmup_ollama()
+
