@@ -231,14 +231,13 @@ def speak_offline(text: str) -> None:
             cmd = (
                 f"Add-Type -AssemblyName System.Speech; "
                 f"$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                f"$s.Rate = 2; $s.Speak('{esc}')"
+                f"$s.Rate = 1; $s.Speak('{esc}')"
             )
-            # Run PowerShell TTS in background so it never hangs Python
-            subprocess.Popen(["powershell", "-NoProfile", "-Command", cmd],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            # Sleep approximate speech duration so logs and sessions remain aligned
-            words = len(text.split())
-            time.sleep(max(1.2, words * 0.35))
+            # Run synchronously so speech fully completes before returning
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", cmd],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
             return
         except Exception as e:
             log.warning("PowerShell TTS failed: %s", e)
@@ -251,7 +250,7 @@ def speak_offline(text: str) -> None:
                 if "male" in v.name.lower() or "david" in v.name.lower():
                     engine.setProperty("voice", v.id)
                     break
-            engine.setProperty("rate", 175)
+            engine.setProperty("rate", 160)
             engine.say(text)
             engine.runAndWait()
             return
@@ -300,7 +299,7 @@ def speak(text: str) -> None:
             "text": text,
             "model_id": EL_MODEL,
         }
-        r = requests.post(url, json=payload, headers=headers, timeout=4)
+        r = requests.post(url, json=payload, headers=headers, timeout=10)
         r.raise_for_status()
         raw = r.content
     except Exception as e:

@@ -224,9 +224,9 @@ def _ask_ollama(query: str) -> str | None:
                 "prompt": prompt_with_history,
                 "system": _SYSTEM_PROMPT,
                 "stream": False,
-                "options": {"num_predict": 300, "temperature": 0.2},
+                "options": {"num_predict": 1500, "temperature": 0.2},
             },
-            timeout=25,
+            timeout=45,
         )
         r.raise_for_status()
         text = r.json().get("response", "").strip()
@@ -390,13 +390,19 @@ def _ask_ollama_raw(prompt: str) -> str | None:
     except Exception:
         return None
 
+    _CODE_SYSTEM_PROMPT = (
+        "You are an expert software developer. "
+        "When given a task, output ONLY the raw source code content — no explanations, "
+        "no markdown code fences, no backticks, no EXECUTE_PYTHON prefix. "
+        "Just the clean, complete, working code."
+    )
     try:
         r = requests.post(
             f"{OLLAMA_URL}/api/generate",
             json={
                 "model": model_to_use,
                 "prompt": prompt,
-                "system": _SYSTEM_PROMPT,
+                "system": _CODE_SYSTEM_PROMPT,
                 "stream": False,
                 "options": {"num_predict": 2000, "temperature": 0.2},
             },

@@ -175,8 +175,8 @@ def parse_command(text: str) -> dict:
         return {"intent": "recall_memory", "params": {"query": recall_m.group(1).strip()}}
 
     # ── Autonomous Coding Workspace Agent ─────────────────────────────────────
-    coding_m = re.match(r"(?:create|build|write|scaffold)\s+(?:a|an)?\s*(?:python|web|flask|react|node|html|landing|portfolio)?\s*(?:website|app|script|project|calculator|todo|api|page)\s*(?:called\s+(.+))?\s*(?:to\s+(.+))?", t)
-    if coding_m and any(w in t for w in ["website", "app", "script", "project", "calculator", "todo", "page"]):
+    coding_m = re.match(r"(?:create|build|write|scaffold|make|code|develop|generate)\s+(?:a|an|me)?\s*(?:python|web|flask|react|node|html|landing|portfolio|simple|basic)?\s*(?:website|app|script|project|calculator|todo|api|page|game|tool|program|application|bot|chatbot|dashboard|portfolio|login|signup|form)\s*(?:called\s+(.+))?\s*(?:to\s+(.+))?", t)
+    if coding_m and any(w in t for w in ["website", "app", "script", "project", "calculator", "todo", "page", "game", "tool", "program", "application", "bot", "dashboard", "login", "signup", "form"]):
         return {"intent": "coding_task", "params": {"description": text}}
     # Broad catch for coding instructions
     if t.startswith("write code for ") or t.startswith("create a python ") or t.startswith("create a website"):
@@ -523,7 +523,15 @@ def parse_command(text: str) -> dict:
     _WRITE_CODE_TRIGGERS = [
         "write code", "write python code", "write some code", "generate code",
         "write python script", "generate python code", "python code",
-        "write a program", "write program", "code for", "write script"
+        "write a program", "write program", "code for", "write script",
+        "write me a", "write a calculator", "write a snake", "write a game",
+        "write a todo", "write a login", "write a web", "write a flask",
+        "write a weather", "write a clock", "write a timer", "write a app",
+        "make a calculator", "make a snake", "make a game", "make a todo",
+        "make a login", "make a web", "make a weather", "make a app",
+        "code a calculator", "code a game", "code a app", "code a todo",
+        "build a calculator", "build a game", "build a app", "build a todo",
+        "develop a", "create code", "create a script", "create a program",
     ]
     if any(p in t for p in _WRITE_CODE_TRIGGERS):
         desc = text
@@ -531,7 +539,8 @@ def parse_command(text: str) -> dict:
                        "write code of", "write code for", "write code to", "write code",
                        "generate python code of", "generate python code for", "generate python code to", "generate python code",
                        "generate code of", "generate code for", "generate code to", "generate code",
-                       "write python script of", "write python script for", "write python script to", "write python script"]:
+                       "write python script of", "write python script for", "write python script to", "write python script",
+                       "write me a", "make a", "build a", "code a", "develop a"]:
             if t.startswith(prefix):
                 desc = text[len(prefix):].strip()
                 break
