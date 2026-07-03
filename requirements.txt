@@ -16,5 +16,4 @@ pyautogui
 pygetwindow
 keyboard
 beautifulsoup4
-faster-whisper
 

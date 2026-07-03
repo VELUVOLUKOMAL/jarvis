@@ -362,10 +362,40 @@ def parse_command(text: str) -> dict:
     if search_sw_m:
         return {"intent": "search_software", "params": {"query": search_sw_m.group(1).strip()}}
 
-    # ── Create Folder ─────────────────────────────────────────────────────────
-    create_folder_m = re.match(r"(?:create|make|new)\s+(?:a\s+)?folder\s+(?:called\s+)?(.+)", t)
-    if create_folder_m:
-        return {"intent": "create_folder", "params": {"folder": create_folder_m.group(1).strip()}}
+    create_folder_m1 = re.match(
+        r"(?:create|make|new)\s+(?:a\s+)?(?:folder|floder|foder|foldar)\s+(?:called|named)?\s*(.+?)\s+(?:at|in)\s+(.+)", t
+    )
+    create_folder_m2 = re.match(
+        r"(?:create|make|new)\s+(?:a\s+)?(?:folder|floder|foder|foldar)\s+(?:at|in)\s+(.+?)\s+(?:called|named)\s*(.+)", t
+    )
+    create_folder_m3 = re.match(
+        r"(?:create|make|new)\s+(?:a\s+)?(?:folder|floder|foder|foldar)\s+(?:called|named)?\s*(.+)", t
+    )
+
+    if create_folder_m1:
+        return {
+            "intent": "create_folder",
+            "params": {
+                "folder": create_folder_m1.group(1).strip(),
+                "location": create_folder_m1.group(2).strip()
+            }
+        }
+    if create_folder_m2:
+        return {
+            "intent": "create_folder",
+            "params": {
+                "folder": create_folder_m2.group(2).strip(),
+                "location": create_folder_m2.group(1).strip()
+            }
+        }
+    if create_folder_m3:
+        return {
+            "intent": "create_folder",
+            "params": {
+                "folder": create_folder_m3.group(1).strip(),
+                "location": ""
+            }
+        }
 
     # ── Delete File ───────────────────────────────────────────────────────────
     delete_file_m = re.match(r"(?:delete|remove|erase)\s+(?:file\s+)?(.+)", t)

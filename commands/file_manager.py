@@ -157,15 +157,23 @@ def list_folder_contents(folder: str) -> tuple[bool, str]:
         return False, f"Could not read {folder}: {e}"
 
 
-def create_folder(folder_name: str) -> tuple[bool, str]:
-    """Create a folder on the Desktop (or user profile)."""
-    desktop = Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop"
-    folder_path = desktop / folder_name
+def create_folder(folder_name: str, location: str = "") -> tuple[bool, str]:
+    """Create a folder at the resolved location."""
+    fn_lower = folder_name.strip().lower()
+    if not location and (fn_lower.startswith("in ") or fn_lower.startswith("at ")):
+        parts = folder_name.strip().split(None, 1)
+        if len(parts) == 2:
+            location = parts[1]
+            folder_name = "New Folder"
+
+    target_dir = _resolve_location(location)
+    folder_path = target_dir / folder_name
     try:
         folder_path.mkdir(parents=True, exist_ok=True)
-        return True, f"Folder '{folder_name}' has been created on your Desktop."
+        return True, f"Folder '{folder_name}' has been created at {target_dir}."
     except Exception as e:
-        return False, f"Could not create folder: {e}"
+        return False, f"Could not create folder {folder_name}: {e}"
+
 
 
 def delete_file_with_confirmation(filename: str, update_hud_fn=None) -> tuple[bool, str]:

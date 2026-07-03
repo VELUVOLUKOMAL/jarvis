@@ -27,16 +27,6 @@ try:
 except ImportError:
     sr = None
 
-# Offline speech recognition via faster-whisper (preferred over Google)
-try:
-    from faster_whisper import WhisperModel as _FasterWhisperModel
-    _whisper_model = None  # lazy-loaded on first use
-    _FASTER_WHISPER_AVAILABLE = True
-except ImportError:
-    _FasterWhisperModel = None
-    _whisper_model = None
-    _FASTER_WHISPER_AVAILABLE = False
-
 try:
     import pyttsx3
 except ImportError:
@@ -112,7 +102,7 @@ EL_FORMAT   = (os.environ.get("ELEVENLABS_OUTPUT_FORMAT") or "pcm_24000").strip(
 # Voice activity detection
 SILENCE_TIMEOUT_S    = 1.2
 MAX_SPEECH_DURATION_S = 6.0
-MIN_SPEECH_RMS       = 0.01
+MIN_SPEECH_RMS       = 0.002
 
 _jarvis_active = True
 _jarvis_active_lock = threading.Lock()
@@ -325,40 +315,10 @@ def speak(text: str) -> None:
 # ─── Speech recognition ──────────────────────────────────────────────────────
 
 def _transcribe_frames(frames: list, rate: int) -> str | None:
-    audio_np = np.concatenate(frames, axis=0)
-
-    # ── Offline path: faster-whisper (no internet needed) ────────────────────
-    if _FASTER_WHISPER_AVAILABLE:
-        global _whisper_model
-        try:
-            import tempfile, wave as _wave
-            if _whisper_model is None:
-                log.info("Loading offline Whisper model (tiny) — first-time only...")
-                _whisper_model = _FasterWhisperModel("tiny", device="cpu", compute_type="int8")
-                log.info("Whisper model loaded.")
-            # Write frames to a temp WAV for whisper
-            audio_i16 = (audio_np * 32767).astype(np.int16)
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                tmp_path = tmp.name
-            with _wave.open(tmp_path, "wb") as wf:
-                wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(rate)
-                wf.writeframes(audio_i16.tobytes())
-            segments, _ = _whisper_model.transcribe(tmp_path, language="en", beam_size=1)
-            text = " ".join(seg.text for seg in segments).strip().lower()
-            try:
-                import os as _os
-                _os.unlink(tmp_path)
-            except Exception:
-                pass
-            return text if text else None
-        except Exception as e:
-            log.warning("Offline Whisper transcription failed: %s", e)
-            # Fall through to online Google as backup
-
-    # ── Online fallback: Google Speech Recognition ────────────────────────────
     if sr is None:
         return None
     try:
+        audio_np = np.concatenate(frames, axis=0)
         audio_i16 = (audio_np * 32767).astype(np.int16)
         audio_data = sr.AudioData(audio_i16.tobytes(), rate, 2)
         recognizer = sr.Recognizer()
@@ -509,7 +469,7 @@ def _execute_single_command(text: str) -> None:
 
     if intent == "create_folder":
         from commands.file_manager import create_folder
-        ok, msg = create_folder(params["folder"])
+        ok, msg = create_folder(params["folder"], params.get("location", ""))
         speak(msg)
         return
 
