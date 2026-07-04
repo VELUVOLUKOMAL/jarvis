@@ -1,5 +1,5 @@
 """
-App Launcher — Opens/focuses Windows applications by name.
+App Launcher — Opens/focuses Windows applications by name for HEY CEO OS.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-log = logging.getLogger("jarvis.app_launcher")
+log = logging.getLogger("hey.app_launcher")
 
 _USER = os.environ.get("USERPROFILE", r"C:\Users\User")
 _LOCAL = os.environ.get("LOCALAPPDATA", os.path.join(_USER, "AppData", "Local"))

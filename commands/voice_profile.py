@@ -1,8 +1,9 @@
 """
-Voice Profile — Speaker verification for JARVIS.
+"""
+Voice Profile — Speaker verification for HEY CEO OS.
 Enrolls the owner's voice and rejects all other speakers.
 
-Enrollment: python jarvis.py --enroll
+Enrollment: python hey.py --enroll
   Records 8 seconds of speech, extracts spectral features, saves profile.
 
 Verification: called automatically on every wake attempt.
@@ -19,9 +20,9 @@ from pathlib import Path
 
 import numpy as np
 
-log = logging.getLogger("jarvis.voice_profile")
+log = logging.getLogger("hey.voice_profile")
 
-PROFILE_PATH = Path(os.environ.get("USERPROFILE", Path.home())) / ".jarvis_voice_profile.json"
+PROFILE_PATH = Path(os.environ.get("USERPROFILE", Path.home())) / ".hey_voice_profile.json"
 SAMPLE_RATE = 16000
 
 # How similar two feature vectors must be (0.0–1.0). Higher = stricter.
@@ -162,12 +163,12 @@ def enroll(speak_fn=None) -> bool:
     all_features = []
 
     if speak_fn:
-        speak_fn(f"Voice enrollment starting. I will record {ENROLL_SAMPLES} samples of your voice. "
+        speak_fn(f"Voice enrollment starting. I will record {ENROLL_SAMPLES} samples. "
                  f"Please speak naturally for {ENROLL_SECONDS} seconds each time.")
 
     for i in range(ENROLL_SAMPLES):
         if speak_fn:
-            speak_fn(f"Sample {i + 1} of {ENROLL_SAMPLES}. Please speak now.")
+            speak_fn(f"Sample {i + 1} of {ENROLL_SAMPLES}. Speak now.")
         else:
             print(f"\n[JARVIS] Sample {i + 1}/{ENROLL_SAMPLES} — Speak now for {ENROLL_SECONDS}s...")
 
@@ -192,7 +193,7 @@ def enroll(speak_fn=None) -> bool:
             if speak_fn:
                 speak_fn("Good. Next sample in 2 seconds.")
             else:
-                print("[JARVIS] Good. Next sample in 2s...")
+                print("[HEY] Good. Next sample in 2s...")
             time.sleep(2)
 
     # Average all samples into one profile
@@ -207,9 +208,9 @@ def enroll(speak_fn=None) -> bool:
     log.info("Voice profile saved to %s", PROFILE_PATH)
 
     if speak_fn:
-        speak_fn("Voice enrollment complete. I will now only respond to your voice, sir.")
+        speak_fn("Voice enrollment complete. HEY will now only respond to your voice.")
     else:
-        print(f"[JARVIS] Enrollment complete. Profile saved to {PROFILE_PATH}")
+        print(f"[HEY] Enrollment complete. Profile saved to {PROFILE_PATH}")
     return True
 
 
@@ -247,7 +248,7 @@ def verify_speaker(frames: list, sr: int = SAMPLE_RATE) -> tuple[bool, float]:
     profile = _load_profile()
     if profile is None:
         # No profile enrolled — allow everyone (warn)
-        log.warning("No voice profile enrolled. Run: python jarvis.py --enroll")
+        log.warning("No voice profile enrolled. Run: python hey.py --enroll")
         return True, 1.0
 
     try:
